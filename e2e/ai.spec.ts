@@ -152,10 +152,10 @@ test("the AI cuts a retake and finds chapters; captions show on the preview", as
   for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("ArrowRight");
   await expect(page.locator(".tc")).toHaveText(/^0:01 /);
-  const before = dark(await bottomPixels(page));
+  await expect.poll(async () => dark(await bottomPixels(page))).toBeLessThan(1000);
   await page.getByLabel("Show captions").check();
-  await expect.poll(async () => dark(await bottomPixels(page)) - before).toBeGreaterThan(2000);
+  await expect.poll(async () => dark(await bottomPixels(page))).toBeGreaterThan(5000);
   await page.getByLabel("Show captions").uncheck();
-  await expect.poll(async () => dark(await bottomPixels(page)) - before).toBeLessThan(500);
+  await expect.poll(async () => dark(await bottomPixels(page))).toBeLessThan(1000);
   expect(errors).toEqual([]);
 });
