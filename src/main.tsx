@@ -62,6 +62,9 @@ function App() {
         <Brand />
         <nav class="topnav">
           <a href="#/record">Record</a>
+          <a href="./llms.txt" target="_blank" rel="noopener">
+            For AI agents
+          </a>
           <a
             class="icon-link"
             href="https://github.com/maxgfr/takeone"

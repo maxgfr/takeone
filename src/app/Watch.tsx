@@ -2,9 +2,10 @@
  * The watch page (`#/watch/<token>`): finds the author's tab, downloads the
  * video from it peer to peer, then plays it. What the viewer does (position,
  * play/pause, reactions, an optional name) goes back to the author, who sees
- * it live. A richer player replaces the plain <video> later.
+ * it live, in takeone's player.
  */
 import { useEffect, useRef, useState } from "preact/hooks";
+import { Player } from "../player/Player";
 import {
   EMOJIS,
   formatBytes,
@@ -67,7 +68,7 @@ export function Watch({ room }: { room: string }) {
   const [sent, setSent] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const handle = useRef<WatchHandle | null>(null);
-  const video = useRef<HTMLVideoElement>(null);
+  const video = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     let objectUrl: string | null = null;
@@ -140,18 +141,21 @@ export function Watch({ room }: { room: string }) {
         </p>
       ) : url ? (
         <div class="watch-player">
-          <video
-            ref={video}
-            src={url}
-            controls
-            playsInline
-            preload="metadata"
-            data-testid="watch-video"
-            onPlay={report}
-            onPause={report}
-            onSeeked={report}
-            onEnded={report}
-            onTimeUpdate={report}
+          <Player
+            side={false}
+            data={{
+              title: meta?.title || "Shared video",
+              src: url,
+              duration: meta?.duration ?? 0,
+              words: [],
+              chapters: meta?.chapters ?? [],
+            }}
+            onVideo={(v) => {
+              video.current = v;
+              v.dataset.testid = "watch-video";
+              for (const type of ["play", "pause", "seeked", "ended", "timeupdate"])
+                v.addEventListener(type, report);
+            }}
           />
         </div>
       ) : (

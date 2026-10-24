@@ -71,7 +71,19 @@ const PATHS = {
   cc: "M3 6h18v12H3zM10 10.5a2 2 0 1 0 0 3M17 10.5a2 2 0 1 0 0 3",
 };
 
-export function Player({ data, embed = false }: { data: PlayerData; embed?: boolean }) {
+export function Player({
+  data,
+  embed = false,
+  side = true,
+  onVideo,
+}: {
+  data: PlayerData;
+  embed?: boolean;
+  /** The title, chapters and transcript beside the video (off when the page shows its own). */
+  side?: boolean;
+  /** The video element, for pages that follow playback (live stats). */
+  onVideo?: (video: HTMLVideoElement) => void;
+}) {
   const video = useRef<HTMLVideoElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const transcriptBox = useRef<HTMLDivElement>(null);
@@ -86,16 +98,19 @@ export function Player({ data, embed = false }: { data: PlayerData; embed?: bool
 
   const shown = lang && data.translations?.[lang] ? data.translations[lang] : data.words;
   const groups = useMemo(() => captionGroups(shown), [shown]);
-  const group = groups.find((g) => {
+  // The line being said; between lines, the last one lingers a moment.
+  const within = (g: PlayerWord[], before: number, after: number) => {
     const a = g[0];
     const b = g[g.length - 1];
-    return a && b && time >= a.start - 0.1 && time <= b.end + 0.4;
-  });
+    return !!a && !!b && time >= a.start - before && time <= b.end + after;
+  };
+  const group = groups.find((g) => within(g, 0.1, 0)) ?? groups.find((g) => within(g, 0, 0.4));
   const chapter = [...data.chapters].reverse().find((c) => c.t <= time + 0.05);
 
   useEffect(() => {
     const v = video.current;
     if (!v) return;
+    onVideo?.(v);
     const tick = () => setTime(v.currentTime);
     const meta = () => Number.isFinite(v.duration) && setDuration(v.duration);
     const on = () => setPlaying(!v.paused);
@@ -192,7 +207,7 @@ export function Player({ data, embed = false }: { data: PlayerData; embed?: bool
   );
 
   return (
-    <div class={`tp ${embed ? "tp-embed" : ""}`} ref={box} tabIndex={-1}>
+    <div class={`tp ${embed ? "tp-embed" : ""} ${side ? "" : "tp-solo"}`} ref={box} tabIndex={-1}>
       <div class="tp-stage">
         {/* Captions are drawn by the player, from the words. */}
         <video
@@ -317,7 +332,7 @@ export function Player({ data, embed = false }: { data: PlayerData; embed?: bool
           </button>
         </div>
       </div>
-      {!embed && (
+      {!embed && side && (
         <div class="tp-side">
           <h1 class="tp-title">{data.title}</h1>
           {data.chapters.length > 0 && (

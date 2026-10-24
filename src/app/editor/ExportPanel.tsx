@@ -11,13 +11,14 @@ import { renderGif } from "../../export/gif";
 import { exportHtml } from "../../export/html";
 import { outputChapters, transcriptMarkdown } from "../../export/text";
 import { renderAudio, renderVideo } from "../../export/video";
-import type { Aspect } from "../../model/project";
+import type { Aspect, Project } from "../../model/project";
+import { captionCues, drawCaptionsAt, toSrt, toVtt } from "../../render/captions";
 import { LivePanel } from "../LivePanel";
 import { clock } from "../Record";
 import { Button, errorText, Field, Icon, type IconName, Modal, toast } from "../ui";
 import { flushSave, project } from "./state";
 
-type Kind = "mp4" | "webm" | "gif" | "audio" | "html" | "text";
+type Kind = "mp4" | "webm" | "gif" | "audio" | "html" | "subs" | "text";
 
 const KINDS: { kind: Kind; icon: IconName; title: string; body: string }[] = [
   {
@@ -41,8 +42,14 @@ const KINDS: { kind: Kind; icon: IconName; title: string; body: string }[] = [
   { kind: "gif", icon: "image", title: "GIF", body: "No sound, for docs, issues and chat." },
   { kind: "audio", icon: "mic", title: "Sound only", body: "The cleaned-up voice as an M4A file." },
   {
-    kind: "text",
+    kind: "subs",
     icon: "text",
+    title: "Captions",
+    body: "SRT or WebVTT, in each language.",
+  },
+  {
+    kind: "text",
+    icon: "file",
     title: "Transcript",
     body: "Markdown with chapters and timestamps.",
   },
@@ -54,6 +61,19 @@ const SIDES = [
   { side: 1440, label: "1440p" },
   { side: 2160, label: "4K" },
 ];
+
+/** Captions drawn over every exported frame, whether or not the preview shows them. */
+function burnCaptions(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  p: Project,
+  clip: string,
+  t: number,
+): void {
+  const style = { ...p.style, captions: { ...p.style.captions, enabled: true } };
+  drawCaptionsAt(ctx, W, H, { ...p, style }, clip, t);
+}
 
 /** The last video rendered in this session, to share without rendering again. */
 const lastVideo = signal<{ blob: Blob; key: string } | null>(null);
@@ -87,6 +107,9 @@ export function ExportPanel({ onClose }: { onClose: () => void }) {
   const side = useSignal(1080);
   const fps = useSignal<30 | 60>(30);
   const aspect = useSignal<Aspect | "project">("project");
+  const burn = useSignal(project.value?.style.captions.enabled ?? false);
+  const subs = useSignal<"srt" | "vtt">("srt");
+  const subsLang = useSignal<string>("");
   const busy = useSignal<{ ratio: number; label: string } | null>(null);
   const sharing = useSignal(false);
   const abort = useRef<AbortController | null>(null);
@@ -101,10 +124,23 @@ export function ExportPanel({ onClose }: { onClose: () => void }) {
     busy.value = { ratio: 0, label: "Preparing…" };
     const onProgress = (ratio: number, label: string) => (busy.value = { ratio, label });
     const format = aspect.value === "project" ? undefined : aspect.value;
+    // Captions burned into the picture, in the language shown in the editor.
+    // The HTML page's player draws its own captions (and switches language): never twice.
+    const overlay = burn.value && kind.value !== "html" ? burnCaptions : undefined;
     try {
       await flushSave();
       const current = project.value ?? p;
       switch (kind.value) {
+        case "subs": {
+          const cues = captionCues(current, subsLang.value || null);
+          const text = subs.value === "srt" ? toSrt(cues) : toVtt(cues);
+          const suffix = subsLang.value ? `.${subsLang.value}` : "";
+          download(
+            new Blob([text], { type: subs.value === "srt" ? "application/x-subrip" : "text/vtt" }),
+            fileName(`${current.title}${suffix}`, subs.value),
+          );
+          break;
+        }
         case "text":
           download(
             new Blob([transcriptMarkdown(current)], { type: "text/markdown" }),
@@ -121,6 +157,7 @@ export function ExportPanel({ onClose }: { onClose: () => void }) {
             side: Math.min(side.value, 540),
             fps: 12,
             ...(format ? { aspect: format } : {}),
+            ...(overlay ? { overlay } : {}),
             onProgress,
             signal: ctrl.signal,
           });
@@ -134,6 +171,7 @@ export function ExportPanel({ onClose }: { onClose: () => void }) {
             side: side.value,
             fps: fps.value,
             ...(format ? { aspect: format } : {}),
+            ...(overlay ? { overlay } : {}),
             onProgress,
             signal: ctrl.signal,
           });
@@ -194,7 +232,46 @@ export function ExportPanel({ onClose }: { onClose: () => void }) {
             </button>
           ))}
         </div>
-        {kind.value !== "text" && kind.value !== "audio" && (
+        {kind.value === "subs" && (
+          <div class="grid-3">
+            <Field label="Format">
+              <select
+                class="input"
+                value={subs.value}
+                onChange={(e) => (subs.value = e.currentTarget.value === "vtt" ? "vtt" : "srt")}
+              >
+                <option value="srt">SRT</option>
+                <option value="vtt">WebVTT</option>
+              </select>
+            </Field>
+            <Field label="Language">
+              <select
+                class="input"
+                value={subsLang.value}
+                onChange={(e) => (subsLang.value = e.currentTarget.value)}
+              >
+                <option value="">Original</option>
+                {Object.keys(p.translations).map((l) => (
+                  <option key={l} value={l}>
+                    {l.toUpperCase()}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        )}
+        {(kind.value === "mp4" || kind.value === "webm" || kind.value === "gif") && (
+          <label class="check">
+            <input
+              type="checkbox"
+              checked={burn.value}
+              onChange={(e) => (burn.value = e.currentTarget.checked)}
+            />
+            Burn the captions into the picture
+            {p.style.captions.language ? ` (${p.style.captions.language.toUpperCase()})` : ""}
+          </label>
+        )}
+        {kind.value !== "text" && kind.value !== "audio" && kind.value !== "subs" && (
           <div class="grid-3">
             <Field label="Shape">
               <select
