@@ -22,6 +22,9 @@
   display: block;
   height: 100%;
 }
+.tp-solo {
+  grid-template-columns: minmax(0, 1fr);
+}
 .tp-stage {
   position: relative;
   align-self: start;

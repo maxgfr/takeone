@@ -4,6 +4,7 @@
  * chapters, its transcript and its captions.
  */
 import type { Project } from "../model/project";
+import { captionCues } from "../render/captions";
 import { outputChapters, outputWords } from "./text";
 
 const escapeHtml = (s: string) =>
@@ -71,6 +72,17 @@ export async function exportHtml(project: Project, video: Blob): Promise<Blob> {
       end: Math.round(w.end * 1000) / 1000,
     })),
     chapters: outputChapters(project),
+    // Each translation as timed lines, for the player's caption menu.
+    translations: Object.fromEntries(
+      Object.keys(project.translations).map((lang) => [
+        lang,
+        captionCues(project, lang).map((c) => ({
+          text: c.text.replace(/\n/g, " "),
+          start: c.start,
+          end: c.end,
+        })),
+      ]),
+    ),
     type: video.type,
     video: b64,
   };

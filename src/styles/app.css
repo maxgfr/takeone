@@ -1,3 +1,5 @@
+@import "../player/player.css";
+
 /* takeone: dark first, like the tools people film in; a warm "recording" accent. */
 :root {
   --accent: #ff5a3c;
@@ -1672,7 +1674,7 @@ select.input {
 }
 .export-kinds {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 10px;
 }
 .export-kind {

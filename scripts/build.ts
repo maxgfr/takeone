@@ -12,8 +12,18 @@
  */
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
+import { z } from "zod";
+import { projectSchema } from "../src/model/project";
 
 const ROOT = resolve(import.meta.dir, "..");
+
+/** The project format as JSON Schema, for people and agents. */
+function projectJsonSchema(): Record<string, unknown> {
+  return z.toJSONSchema(projectSchema, { io: "input", target: "draft-2020-12" }) as Record<
+    string,
+    unknown
+  >;
+}
 
 export const CSP = [
   "default-src 'none'",
@@ -154,8 +164,9 @@ export async function build(opts: BuildOptions = {}): Promise<{ outdir: string; 
   assertOk(player, "player build");
   await cp(join(ROOT, "src/player/player.css"), join(outdir, "player/player.css"));
 
-  // 4. Static files.
+  // 4. Static files, and the schema of the project format.
   await cp(join(ROOT, "public"), outdir, { recursive: true });
+  await writeFile(join(outdir, "schema.json"), `${JSON.stringify(projectJsonSchema(), null, 2)}\n`);
 
   // 5. Harden the page.
   const path = join(outdir, "index.html");

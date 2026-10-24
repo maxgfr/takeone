@@ -1,0 +1,21 @@
+# takeone
+
+> takeone records a screen, a camera and a microphone, and edits the video by editing its transcript. It runs entirely in the browser at https://maxgfr.github.io/takeone/ — no server, no account. This file tells AI agents how a takeone project is built.
+
+## What a project is
+
+A project is one JSON document (schema: https://maxgfr.github.io/takeone/schema.json):
+
+- `clips`: the takes, in the order the video plays them. Each has a `duration` (seconds), its recorded files (`screen`, `camera`, `mic`: a storage `key`, a MIME `type`, and an `offset` in seconds after the screen recording started), the `activity` noted while recording (where the screen changed, used for zooms), and its `transcript` (`segments` and `words`, each `{ text, start, end }` in seconds on the take's own clock).
+- The edit is made of ranges on a take's own clock, never on the output's: `cuts` (`{ clip, start, end, reason }`: removed), `layouts` (`bubble`, `screen`, `camera` or `side` over a range), `zooms` (`box` = the region of the screen shown, `{ x, y, w, h }` normalized 0–1), `blurs` (a `box` blurred over a range).
+- The output timeline is derived: each take in order, minus its cuts. Cutting a sentence moves everything after it; removing a cut restores it.
+- `style`: `aspect` (`16:9`, `9:16`, `1:1`, `4:3`), `background` (a gradient name: `ember`, `aurora`, `ocean`, `mint`, `dusk`, `paper`, a CSS color, or `none`), `padding` and `radius` (fractions of the output's shorter side), `shadow`, the default `layout`, the camera `bubble` (corner, size, shape, mirror), `captions` (enabled, size, position, karaoke, language) and `audio` (denoise, normalize to −16 LUFS, the screen's volume).
+- `chapters` (`{ clip, t, title }` on a take's clock), `translations` (captions by language code: `{ clip, text, start, end }`), `meta` (`summary`, `description`, `posts`).
+
+## Editing as an agent
+
+To shorten a video, add cuts: for words `i` to `j` of a take's transcript, cut from `words[i].start` to `words[j + 1].start` (or `words[j].end + 0.12` when a long pause follows). Filler words and pauses longer than a second are the usual first cuts. Chapters point at a take and a time on its clock.
+
+Exports (MP4 up to 4K60, WebM, GIF, M4A, SRT/VTT, Markdown, one HTML file with a player) are rendered in the user's browser from the project and its files; a live link streams the exported file peer to peer from the author's tab.
+
+Source: https://github.com/maxgfr/takeone
