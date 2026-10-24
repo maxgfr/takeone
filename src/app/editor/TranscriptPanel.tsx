@@ -5,6 +5,7 @@
  * being said is highlighted while the video plays.
  */
 import { signal, useSignal } from "@preact/signals";
+import { RESPONSE_LANGUAGES } from "llm-connect";
 import { useEffect, useRef } from "preact/hooks";
 import { loadLlmSettings, savedSettings } from "../../ai/settings";
 import { fillerCuts, isCut, silenceCuts, wordsRange } from "../../edit/clean";
@@ -32,6 +33,28 @@ function loadEngine(): Engine | null {
   }
 }
 const engineChoice = signal<Engine | null>(loadEngine());
+
+const SPOKEN_KEY = "takeone-spoken-language";
+/** The language spoken in the takes: the browser's until chosen (Whisper does not detect it). */
+function loadSpoken(): string {
+  try {
+    const v = localStorage.getItem(SPOKEN_KEY);
+    if (v) return v;
+  } catch {
+    // Not remembered: fall back to the browser's language.
+  }
+  const code = (navigator.language ?? "en").toLowerCase().split(/[-_]/)[0] ?? "en";
+  return RESPONSE_LANGUAGES.some((l) => l.code === code) ? code : "en";
+}
+const spoken = signal(loadSpoken());
+function setSpoken(v: string) {
+  spoken.value = v;
+  try {
+    localStorage.setItem(SPOKEN_KEY, v);
+  } catch {
+    // The choice still holds for this session.
+  }
+}
 function setEngine(v: Engine) {
   engineChoice.value = v;
   try {
@@ -85,9 +108,17 @@ function Take({
     const choice = engineChoice.value ?? defaultEngine(settings);
     busy.value = { ...busy.value, [clip.id]: "Starting…" };
     try {
-      const transcript = await transcribeClip(p.id, clip, choice, settings, (m) => {
-        busy.value = { ...busy.value, [clip.id]: m };
-      });
+      const transcript = await transcribeClip(
+        p.id,
+        clip,
+        choice,
+        settings,
+        (m) => {
+          busy.value = { ...busy.value, [clip.id]: m };
+        },
+        undefined,
+        spoken.value,
+      );
       updateClip(clip.id, (c) => ({ ...c, transcript }));
       toast(`Take ${index + 1} transcribed: ${transcript.words.length} words.`, "success");
     } catch (err) {
@@ -237,6 +268,19 @@ export function TranscriptPanel({ engine }: { engine: PreviewEngine | null }) {
           </option>
           <option value="device-fast">This device: fast (80 MB once)</option>
           <option value="device-accurate">This device: accurate (600 MB, GPU)</option>
+        </select>
+        <select
+          class="input input-sm"
+          aria-label="Spoken language"
+          title="The language spoken in the takes"
+          value={spoken.value}
+          onChange={(e) => setSpoken(e.currentTarget.value)}
+        >
+          {RESPONSE_LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.label}
+            </option>
+          ))}
         </select>
         <button type="button" class="link-btn small" onClick={() => (settingsOpen.value = true)}>
           AI settings
