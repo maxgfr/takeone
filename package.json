@@ -1,0 +1,28 @@
+{
+  "name": "takeone",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Record your screen, camera and voice, edit by text, share without a server. Frontend only, hosted on GitHub Pages.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "bun scripts/dev.ts",
+    "build": "bun scripts/build.ts",
+    "typecheck": "tsc --noEmit -p .",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "bun test src scripts",
+    "test:e2e": "bun run build && playwright test"
+  },
+  "dependencies": {
+    "@preact/signals": "2.11.3",
+    "preact": "10.29.8",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@playwright/test": "1.64.1",
+    "@types/bun": "1.4.4",
+    "typescript": "7.0.2"
+  }
+}
