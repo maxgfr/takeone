@@ -45,7 +45,9 @@ function headInject(): string {
 }
 
 /** Workers built on their own; `define` is the global the app reads their URL from. */
-export const WORKERS: { entry: string; define: string }[] = [];
+export const WORKERS: { entry: string; define: string }[] = [
+  { entry: "src/workers/clock.ts", define: "__CLOCK_WORKER_URL__" },
+];
 
 export interface BuildOptions {
   outdir?: string;
