@@ -64,13 +64,17 @@ async function responses(route: Route, asked: string[]) {
   });
 }
 
-/** Pixels of the bottom of the preview, where captions go. */
-function bottomPixels(page: Page): Promise<number[]> {
+/** Near-black pixels at the bottom of the preview, where the captions' band goes (counted in the page). */
+function darkBottom(page: Page): Promise<number> {
   return page.locator(".stage-canvas").evaluate((c: HTMLCanvasElement) => {
     const ctx = c.getContext("2d");
-    if (!ctx) return [];
+    if (!ctx) return 0;
     const top = Math.round(c.height * 0.72);
-    return Array.from(ctx.getImageData(0, top, c.width, c.height - top).data);
+    const { data } = ctx.getImageData(0, top, c.width, c.height - top);
+    let n = 0;
+    for (let i = 0; i < data.length; i += 4)
+      if ((data[i] ?? 0) + (data[i + 1] ?? 0) + (data[i + 2] ?? 0) < 90) n++;
+    return n;
   });
 }
 
@@ -78,20 +82,12 @@ function bottomPixels(page: Page): Promise<number[]> {
 async function steadyDark(page: Page): Promise<number> {
   let last = -1;
   for (let i = 0; i < 40; i++) {
-    const now = dark(await bottomPixels(page));
+    const now = await darkBottom(page);
     if (Math.abs(now - last) < 50) return now;
     last = now;
     await page.waitForTimeout(150);
   }
   return last;
-}
-
-/** Near-black pixels: the captions' band (the screen and the background have none). */
-function dark(px: number[]): number {
-  let n = 0;
-  for (let i = 0; i < px.length; i += 4)
-    if ((px[i] ?? 0) + (px[i + 1] ?? 0) + (px[i + 2] ?? 0) < 90) n++;
-  return n;
 }
 
 test("the AI cuts a retake and finds chapters; captions show on the preview", async ({
@@ -166,11 +162,8 @@ test("the AI cuts a retake and finds chapters; captions show on the preview", as
   await expect(page.locator(".tc")).toHaveText(/^0:01 /);
   const off = await steadyDark(page);
   await page.getByLabel("Show captions").check();
-  await page.waitForTimeout(500);
-  const px = await bottomPixels(page);
-  console.log("captions probe", { off, on: dark(px), length: px.length, sample: px.slice(0, 8) });
-  await expect.poll(async () => dark(await bottomPixels(page)) - off).toBeGreaterThan(3000);
+  await expect.poll(async () => (await darkBottom(page)) - off).toBeGreaterThan(3000);
   await page.getByLabel("Show captions").uncheck();
-  await expect.poll(async () => Math.abs(dark(await bottomPixels(page)) - off)).toBeLessThan(800);
+  await expect.poll(async () => Math.abs((await darkBottom(page)) - off)).toBeLessThan(800);
   expect(errors).toEqual([]);
 });
