@@ -49,7 +49,8 @@ test("the edit exports to MP4 (with its sound), a vertical version, HTML, GIF an
   await dialog.getByRole("button", { name: "Export", exact: true }).click();
   let file = await readFile(await (await download).path());
   expect(file.includes("ftyp")).toBe(true);
-  expect(file.includes("mp4a")).toBe(true);
+  // An audio track: AAC where the browser encodes it, else Opus (open-source Chromium on Linux)
+  expect(file.includes("mp4a") || file.includes("Opus")).toBe(true);
   const mp4 = await probe(page, file, "video/mp4");
   expect([mp4.w, mp4.h]).toEqual([1280, 720]);
   expect(mp4.duration).toBeGreaterThan(2);
