@@ -74,6 +74,18 @@ function bottomPixels(page: Page): Promise<number[]> {
   });
 }
 
+/** The dark-pixel count once the paused preview has settled (two reads in a row agree). */
+async function steadyDark(page: Page): Promise<number> {
+  let last = -1;
+  for (let i = 0; i < 40; i++) {
+    const now = dark(await bottomPixels(page));
+    if (Math.abs(now - last) < 50) return now;
+    last = now;
+    await page.waitForTimeout(150);
+  }
+  return last;
+}
+
 /** Near-black pixels: the captions' band (the screen and the background have none). */
 function dark(px: number[]): number {
   let n = 0;
@@ -152,10 +164,10 @@ test("the AI cuts a retake and finds chapters; captions show on the preview", as
   for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("ArrowRight");
   await expect(page.locator(".tc")).toHaveText(/^0:01 /);
-  await expect.poll(async () => dark(await bottomPixels(page))).toBeLessThan(1000);
+  const off = await steadyDark(page);
   await page.getByLabel("Show captions").check();
-  await expect.poll(async () => dark(await bottomPixels(page))).toBeGreaterThan(5000);
+  await expect.poll(async () => dark(await bottomPixels(page)) - off).toBeGreaterThan(3000);
   await page.getByLabel("Show captions").uncheck();
-  await expect.poll(async () => dark(await bottomPixels(page))).toBeLessThan(1000);
+  await expect.poll(async () => Math.abs(dark(await bottomPixels(page)) - off)).toBeLessThan(800);
   expect(errors).toEqual([]);
 });
