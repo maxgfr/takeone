@@ -166,6 +166,9 @@ test("the AI cuts a retake and finds chapters; captions show on the preview", as
   await expect(page.locator(".tc")).toHaveText(/^0:01 /);
   const off = await steadyDark(page);
   await page.getByLabel("Show captions").check();
+  await page.waitForTimeout(500);
+  const px = await bottomPixels(page);
+  console.log("captions probe", { off, on: dark(px), length: px.length, sample: px.slice(0, 8) });
   await expect.poll(async () => dark(await bottomPixels(page)) - off).toBeGreaterThan(3000);
   await page.getByLabel("Show captions").uncheck();
   await expect.poll(async () => Math.abs(dark(await bottomPixels(page)) - off)).toBeLessThan(800);
