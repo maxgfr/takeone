@@ -1,5 +1,7 @@
 import { render } from "preact";
 import { Home } from "./app/Home";
+import { ProjectPage } from "./app/ProjectPage";
+import { Record } from "./app/Record";
 import { route } from "./app/router";
 import { Icon, Toasts } from "./app/ui";
 
@@ -18,7 +20,12 @@ function Brand() {
 
 /** The page for the current route (more pages arrive with each milestone). */
 function Page() {
-  switch (route.value.name) {
+  const r = route.value;
+  switch (r.name) {
+    case "record":
+      return <Record projectId={r.project} />;
+    case "edit":
+      return <ProjectPage id={r.id} />;
     default:
       return <Home />;
   }

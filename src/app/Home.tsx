@@ -1,3 +1,4 @@
+import { Library } from "./Library";
 import { navigate } from "./router";
 import { Button, Icon, type IconName } from "./ui";
 
@@ -58,6 +59,8 @@ export function Home() {
           </Button>
         </div>
       </section>
+
+      <Library />
 
       <section class="mock" aria-label="What editing looks like">
         <div class="mock-video">

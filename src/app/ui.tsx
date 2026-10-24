@@ -186,6 +186,13 @@ export function errorText(err: unknown): string {
   if (err instanceof DOMException && err.name === "AbortError") return "Cancelled.";
   if (err instanceof DOMException && err.name === "NotAllowedError")
     return "Permission was refused.";
+  if (
+    err instanceof DOMException &&
+    (err.name === "NotFoundError" || err.name === "NotSupportedError")
+  )
+    return "No such device was found.";
+  if (err instanceof DOMException && err.name === "NotReadableError")
+    return "The device is busy: another app may be using it.";
   return err instanceof Error ? err.message : String(err);
 }
 
