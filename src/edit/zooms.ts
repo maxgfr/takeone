@@ -44,6 +44,22 @@ export function frameAround(focus: Box): Box {
   return { x, y, w, h };
 }
 
+/**
+ * The view for a region already framed with its room (as the AI edit gives it): the region
+ * itself, as wide as high in shares so the screen keeps its aspect, at most MAX_SCALE closer.
+ */
+export function frameRegion(region: Box): Box {
+  const size = Math.min(1, Math.max(1 / MAX_SCALE, region.w * 1.1, region.h * 1.1));
+  const cx = region.x + region.w / 2;
+  const cy = region.y + region.h / 2;
+  return {
+    x: Math.min(1 - size, Math.max(0, cx - size / 2)),
+    y: Math.min(1 - size, Math.max(0, cy - size / 2)),
+    w: size,
+    h: size,
+  };
+}
+
 /** Groups of nearby, mid-sized changes. */
 export function groupActivity(
   events: readonly Activity[],

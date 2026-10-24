@@ -23,9 +23,12 @@ from recording to the 4K export, happens in your browser.
    only, side by side) that slide from one to the next; zooms placed where you clicked, editable;
    blurred regions over time; backgrounds, padding, rounded corners, shadows; 16:9, 9:16, 1:1 or
    4:3; captions with the word being said lit up, in other languages too.
-4. **Let AI help, if you want.** With your own key: find failed or repeated takes and cut them,
-   write the title, summary and description, find chapters, write posts for LinkedIn and X, and
-   translate the captions.
+4. **Let AI edit, if you want.** With your own key, one button: the model reads what you said
+   and looks at stills of your screen, then places zooms on what you talk about, switches to the
+   camera or the screen alone where it fits, blurs personal data it sees (emails, keys, phone
+   numbers), cuts retakes, filler words and long pauses, and adds chapters, all in one undo step
+   with each change listed to drop. It also writes the title, summary and description, posts for
+   LinkedIn and X, and translates the captions.
 5. **Share.** Export MP4 (H.264, up to 4K at 60 fps), WebM, GIF, the sound alone, the transcript,
    SRT/VTT captions, or one HTML file that plays offline with chapters, captions and a searchable
    transcript. Or send a **live link**: the video streams from your tab, peer to peer, and you see

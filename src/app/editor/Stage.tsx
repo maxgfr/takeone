@@ -110,7 +110,12 @@ export function Stage({
                     z.id === region.id ? { ...z, box: next, auto: false } : z,
                   ),
                 }
-              : { ...p, blurs: p.blurs.map((b) => (b.id === region.id ? { ...b, box: next } : b)) },
+              : {
+                  ...p,
+                  blurs: p.blurs.map((b) =>
+                    b.id === region.id ? { ...b, box: next, auto: false } : b,
+                  ),
+                },
           `${region.id}:box`,
         );
       };

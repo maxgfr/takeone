@@ -26,6 +26,19 @@ const cors = {
 /** What the mocked model answers, by the name of the schema it is asked to fill. */
 const ANSWERS: Record<string, unknown> = {
   retakes: { retakes: [{ take: 1, from: 0, to: 3, reason: "restarted sentence" }] },
+  edit: {
+    zooms: [
+      {
+        take: 1,
+        from: 9,
+        to: 12,
+        region: { x: 0.6, y: 0.1, w: 0.2, h: 0.1 },
+        why: "the add button",
+      },
+    ],
+    layouts: [],
+    blurs: [{ frame: "F1", region: { x: 0.1, y: 0.8, w: 0.3, h: 0.05 }, why: "an email address" }],
+  },
   chapters: {
     chapters: [
       { take: 1, word: 4, title: "Intro" },
@@ -34,12 +47,18 @@ const ANSWERS: Record<string, unknown> = {
   },
 };
 
-/** OpenAI's Responses API, as the AI SDK reads it. */
-async function responses(route: Route, asked: string[]) {
+/** OpenAI's Responses API, as the AI SDK reads it; `images` counts the images each call sent. */
+async function responses(route: Route, asked: string[], images: Record<string, number> = {}) {
   if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
-  const body = route.request().postDataJSON() as { text?: { format?: { name?: string } } };
+  const body = route.request().postDataJSON() as {
+    text?: { format?: { name?: string } };
+    input?: { content?: { type: string }[] | string }[];
+  };
   const name = body.text?.format?.name ?? "";
   asked.push(name);
+  images[name] = (body.input ?? []).flatMap((m) =>
+    Array.isArray(m.content) ? m.content.filter((c) => c.type === "input_image") : [],
+  ).length;
   await route.fulfill({
     headers: cors,
     json: {
@@ -90,13 +109,11 @@ async function steadyDark(page: Page): Promise<number> {
   return last;
 }
 
-test("the AI cuts a retake and finds chapters; captions show on the preview", async ({
-  page,
-  context,
-}) => {
-  await context.grantPermissions(["camera", "microphone"]);
-  const errors: string[] = [];
-  page.on("pageerror", (e) => errors.push(e.message));
+/** A take recorded and transcribed with a mocked OpenAI key; what the model is then asked. */
+async function transcribedTake(
+  page: Page,
+  name: string,
+): Promise<{ asked: string[]; images: Record<string, number> }> {
   await page.route(/models\.dev|openrouter\.ai/, (r) => r.abort());
   await page.route("https://api.openai.com/v1/audio/transcriptions", async (route) => {
     if (route.request().method() === "OPTIONS")
@@ -112,18 +129,21 @@ test("the AI cuts a retake and finds chapters; captions show on the preview", as
     });
   });
   const asked: string[] = [];
-  await page.route("https://api.openai.com/v1/responses", (route) => responses(route, asked));
+  const images: Record<string, number> = {};
+  await page.route("https://api.openai.com/v1/responses", (route) =>
+    responses(route, asked, images),
+  );
 
   // A take, transcribed with your own key
   await page.goto("./#/record");
-  await page.getByLabel("Name").fill("AI take");
+  await page.getByLabel("Name").fill(name);
   await page.getByLabel("Camera", { exact: true }).selectOption("none");
   await page.getByLabel("Microphone", { exact: true }).selectOption("");
   await page.getByRole("button", { name: "Start recording" }).click();
   await expect(page.getByText("Recording", { exact: true })).toBeVisible({ timeout: 10_000 });
   await page.waitForTimeout(3400);
   await page.getByRole("button", { name: /Stop/ }).first().click();
-  await expect(page.getByLabel("Title")).toHaveValue("AI take", { timeout: 20_000 });
+  await expect(page.getByLabel("Title")).toHaveValue(name, { timeout: 20_000 });
   await page.getByRole("button", { name: "AI settings" }).click();
   await page.getByLabel("Provider").selectOption("openai");
   await page.getByLabel("API key").fill("sk-test");
@@ -131,11 +151,23 @@ test("the AI cuts a retake and finds chapters; captions show on the preview", as
   await page.getByLabel("Transcribe with").selectOption("provider");
   await page.getByRole("button", { name: "Transcribe", exact: true }).click();
   await expect(page.locator(".w")).toHaveCount(WORDS.length, { timeout: 15_000 });
+  return { asked, images };
+}
+
+test("the AI cuts a retake and finds chapters; captions show on the preview", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["camera", "microphone"]);
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const { asked } = await transcribedTake(page, "AI take");
 
   // Retakes: found, played, accepted as a cut
   await page.getByRole("button", { name: "AI", exact: true }).click();
   const panel = page.getByRole("complementary", { name: "AI" });
   await expect(panel.getByText(/OpenAI/)).toBeVisible();
+  await panel.getByRole("button", { name: "Retakes", exact: true }).click();
   await panel.getByRole("button", { name: "Find retakes" }).click();
   const retake = panel.getByRole("listitem").filter({ hasText: "So this is the—" });
   await expect(retake).toBeVisible();
@@ -165,5 +197,42 @@ test("the AI cuts a retake and finds chapters; captions show on the preview", as
   await expect.poll(async () => (await darkBottom(page)) - off).toBeGreaterThan(3000);
   await page.getByLabel("Show captions").uncheck();
   await expect.poll(async () => Math.abs((await darkBottom(page)) - off)).toBeLessThan(800);
+  expect(errors).toEqual([]);
+});
+
+test("the AI edits the video: zooms, blurs, cuts and chapters in one step", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["camera", "microphone"]);
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  const { asked, images } = await transcribedTake(page, "Edited take");
+
+  await page.getByRole("button", { name: "AI", exact: true }).click();
+  const panel = page.getByRole("complementary", { name: "AI" });
+  await panel.getByRole("button", { name: "Edit the video" }).click();
+  const changes = panel.getByRole("list", { name: "Changes" });
+  await expect(changes).toBeVisible({ timeout: 20_000 });
+  await expect(changes.getByRole("listitem").filter({ hasText: /^.*Zoom 2\.4×/ })).toContainText(
+    "the add button",
+  );
+  await expect(changes.getByRole("listitem").filter({ hasText: "Blur" })).toContainText(
+    "an email address",
+  );
+  await expect(changes.getByText("Cut “So this is the—”")).toBeVisible();
+  await expect(changes.getByText("Chapter: Intro")).toBeVisible();
+  // The model saw stills of the screen; the retakes and chapters calls read words only.
+  expect([...asked].sort()).toEqual(["chapters", "edit", "retakes"]);
+  expect(images.edit).toBeGreaterThan(0);
+  expect(images.retakes).toBe(0);
+  await expect(page.locator(".w.is-cut")).toHaveCount(4);
+  await expect(page.locator(".tl-chapter")).toHaveText(["Intro"]);
+
+  // A change dropped is gone from the edit; undo brings it back.
+  await changes.getByRole("button", { name: "Drop: Blur" }).click();
+  await expect(changes.getByRole("listitem").filter({ hasText: "Blur" })).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(changes.getByRole("listitem").filter({ hasText: "Blur" })).toHaveCount(1);
   expect(errors).toEqual([]);
 });

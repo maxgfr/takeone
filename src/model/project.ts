@@ -77,7 +77,11 @@ export type Cut = z.infer<typeof cutSchema>;
 
 export const LAYOUTS = ["bubble", "screen", "camera", "side"] as const;
 export type LayoutKind = (typeof LAYOUTS)[number];
-export const layoutSchema = rangeSchema.extend({ layout: z.enum(LAYOUTS) });
+/** `auto`: placed by the AI edit (or suggested), replaced when it runs again. */
+export const layoutSchema = rangeSchema.extend({
+  layout: z.enum(LAYOUTS),
+  auto: z.boolean().default(false),
+});
 export type LayoutRange = z.infer<typeof layoutSchema>;
 
 /** A zoom on the screen: `box` is the region shown, normalized to the screen. */
@@ -85,7 +89,7 @@ export const zoomSchema = rangeSchema.extend({ box: boxSchema, auto: z.boolean()
 export type Zoom = z.infer<typeof zoomSchema>;
 
 /** A region of the screen blurred while it is shown. */
-export const blurSchema = rangeSchema.extend({ box: boxSchema });
+export const blurSchema = rangeSchema.extend({ box: boxSchema, auto: z.boolean().default(false) });
 export type Blur = z.infer<typeof blurSchema>;
 
 export const ASPECTS = ["16:9", "9:16", "1:1", "4:3"] as const;

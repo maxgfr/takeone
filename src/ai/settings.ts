@@ -7,11 +7,15 @@
  */
 import { signal } from "@preact/signals";
 import {
+  type Capabilities,
   createLlmSettingsStore,
   isConfigured,
   type LlmSettings,
   type LlmSettingsState,
   liveCatalog,
+  modelIdOf,
+  providerKindOf,
+  resolveCapabilities,
   type SlimModel,
   secureStorage,
 } from "llm-connect";
@@ -46,6 +50,16 @@ function catalogModel(settings: LlmSettings): SlimModel | undefined {
   const catalog = llm.getState().catalog;
   if (!catalog || !settings.providerId) return undefined;
   return catalog[settings.providerId]?.models[settings.model];
+}
+
+/** What the model takes (images, effort…), from the catalog's entry when there is one. */
+export function capabilitiesOf(settings: LlmSettings): Capabilities {
+  const catalog = catalogModel(settings);
+  return resolveCapabilities({
+    kind: providerKindOf(settings),
+    modelId: modelIdOf(settings),
+    ...(catalog ? { catalog } : {}),
+  });
 }
 
 export function modelLabel(settings: LlmSettings | null): string {

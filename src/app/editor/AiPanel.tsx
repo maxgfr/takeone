@@ -1,13 +1,17 @@
 /**
- * The AI panel, in place of the settings while it is open: retakes to cut
- * (each one played, then accepted or rejected), chapters, a title with a
- * summary and a description, and posts to share the video. Every tool is one
+ * The AI panel, in place of the settings while it is open: the AI edit (zooms,
+ * layouts, blurs, cuts and chapters placed in one go, each change listed to
+ * keep or drop), retakes to cut (each one played, then accepted or rejected),
+ * chapters, a title with a summary and a description, and posts to share the
+ * video. Every tool is one
  * request to the user's own model, cancellable, and nothing it writes is
  * final: retakes are ordinary cuts, and every text stays editable.
  */
 import { signal, useSignal } from "@preact/signals";
 import { type LlmSettings, languageName, RESPONSE_LANGUAGES } from "llm-connect";
 import { useEffect } from "preact/hooks";
+import { visionProblem } from "../../ai/call";
+import { applyPlan, type EditNote, planEdit } from "../../ai/edit";
 import { llmState, loadLlmSettings, modelLabel, savedSettings } from "../../ai/settings";
 import {
   answerLanguage,
@@ -20,7 +24,7 @@ import {
 } from "../../ai/tools";
 import { chapterList, chapterMarks, chapterTime } from "../../edit/chapters";
 import { fillerCuts, silenceCuts } from "../../edit/clean";
-import { clipAt } from "../../edit/ops";
+import { clipAt, removeItem } from "../../edit/ops";
 import type { PreviewEngine } from "../../edit/preview";
 import { newId, type Project } from "../../model/project";
 import { ModelSettingsModal } from "../ModelSettings";
@@ -31,15 +35,16 @@ import { project, segments, update } from "./state";
 /** The panel is open. */
 export const aiOpen = signal(false);
 
-type Tool = "retakes" | "chapters" | "texts" | "posts";
+type Tool = "edit" | "retakes" | "chapters" | "texts" | "posts";
 const TABS: { id: Tool; label: string }[] = [
+  { id: "edit", label: "Edit" },
   { id: "retakes", label: "Retakes" },
   { id: "chapters", label: "Chapters" },
   { id: "texts", label: "Title" },
   { id: "posts", label: "Posts" },
 ];
 
-const tab = signal<Tool>("retakes");
+const tab = signal<Tool>("edit");
 /** "" writes in the video's language. */
 const language = signal("");
 const running = signal<Partial<Record<Tool, AbortController>>>({});
@@ -129,6 +134,140 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
     >
       {label}
     </Button>
+  );
+}
+
+/** What the AI edit may change. */
+const editWhat = signal({ visual: true, retakes: true, clean: true, chapters: true });
+const editStep = signal("");
+/** The last AI edit of a project: what it changed, to review. */
+const edited = signal<{ project: string; notes: EditNote[] } | null>(null);
+
+const EDIT_CHOICES: { key: keyof typeof editWhat.value; label: string }[] = [
+  { key: "visual", label: "Zooms, layouts and blurs" },
+  { key: "retakes", label: "Cut the retakes" },
+  { key: "clean", label: "Cut filler words and long pauses" },
+  { key: "chapters", label: "Chapters" },
+];
+
+function stillThere(p: Project, n: EditNote): boolean {
+  switch (n.kind) {
+    case "zoom":
+      return p.zooms.some((z) => z.id === n.id);
+    case "layout":
+      return p.layouts.some((l) => l.id === n.id);
+    case "blur":
+      return p.blurs.some((b) => b.id === n.id);
+    case "cut":
+      return !n.id || p.cuts.some((c) => c.id === n.id);
+    case "chapter":
+      return p.chapters.some((c) => c.id === n.id);
+  }
+}
+
+function Edit({ p, engine, ready }: { p: Project; engine: PreviewEngine | null; ready: boolean }) {
+  const settings = savedSettings();
+  const blind = settings ? visionProblem(settings) : null;
+  const what = editWhat.value;
+  const notes = edited.value?.project === p.id ? edited.value.notes : null;
+  const segs = segments.value;
+  const kept = (notes ?? []).filter((n) => stillThere(p, n));
+
+  const drop = (n: EditNote) => {
+    if (n.kind === "chapter")
+      update((x) => ({ ...x, chapters: x.chapters.filter((c) => c.id !== n.id) }));
+    else if (n.id) update((x) => removeItem(x, n.kind as "zoom" | "layout" | "blur" | "cut", n.id));
+  };
+  const go = (n: EditNote) => {
+    const at = chapterTime(segs, { clip: n.clip, t: n.t });
+    if (at !== null) engine?.seek(Math.max(0, at - 0.3));
+  };
+
+  return (
+    <>
+      <p class="muted small">
+        Your model reads what you said and looks at your screen, then edits the video: zooms on what
+        you talk about, the camera or the screen alone where it fits, blurs over personal data it
+        sees, retakes, filler words and long pauses cut, chapters. Everything lands in one undo
+        step, and each change can be dropped below.
+      </p>
+      <div class="ai-choices">
+        {EDIT_CHOICES.map((c) => (
+          <label key={c.key} class="check">
+            <input
+              type="checkbox"
+              checked={what[c.key]}
+              onChange={(e) => (editWhat.value = { ...what, [c.key]: e.currentTarget.checked })}
+            />
+            {c.label}
+          </label>
+        ))}
+      </div>
+      {what.visual && blind && (
+        <p class="field-hint">
+          This model does not see images: zooms follow the changes noted while recording, and
+          nothing is blurred.
+        </p>
+      )}
+      <RunBar
+        tool="edit"
+        label={notes ? "Edit again" : "Edit the video"}
+        busyLabel={editStep.value || "Reading the transcript…"}
+        disabled={!ready || !Object.values(what).some(Boolean)}
+        onRun={() =>
+          void run(
+            "edit",
+            (s, x, signal) =>
+              planEdit(s, x, {
+                ...what,
+                language: language.value || null,
+                signal,
+                onProgress: (m) => (editStep.value = m),
+              }),
+            (plan) => {
+              editStep.value = "";
+              update((x) => applyPlan(x, plan, what.visual));
+              edited.value = { project: p.id, notes: plan.notes };
+              toast(
+                plan.notes.length
+                  ? "Edited in one step: undo with ⌘Z, or drop a change below."
+                  : "The model found nothing to change.",
+                "success",
+              );
+            },
+          )
+        }
+      />
+      {kept.length > 0 && (
+        <ul class="ai-list" aria-label="Changes">
+          {kept.map((n, i) => {
+            const at = chapterTime(segs, { clip: n.clip, t: n.t });
+            return (
+              <li key={n.id || `${n.what}-${i}`} class="ai-item ai-change">
+                <button
+                  type="button"
+                  class="ai-time"
+                  title="Go there"
+                  aria-label={`Go to ${clock(at ?? 0)}`}
+                  onClick={() => go(n)}
+                >
+                  {clock(at ?? 0)}
+                </button>
+                <div class="ai-item-body">
+                  <span>{n.what}</span>
+                  {n.why && <span class="muted small">{n.why}</span>}
+                </div>
+                {n.id && (
+                  <div class="ai-item-actions">
+                    <IconButton icon="close" label={`Drop: ${n.what}`} onClick={() => drop(n)} />
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
   );
 }
 
@@ -564,6 +703,7 @@ export function AiPanel({ engine }: { engine: PreviewEngine | null }) {
         ))}
       </fieldset>
       <section class="ai-tool">
+        {tab.value === "edit" && <Edit p={p} engine={engine} ready={ready} />}
         {tab.value === "retakes" && <Retakes p={p} engine={engine} ready={ready} />}
         {tab.value === "chapters" && <Chapters p={p} engine={engine} ready={ready} />}
         {tab.value === "texts" && <Texts p={p} ready={ready} />}

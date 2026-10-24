@@ -62,8 +62,8 @@ function SelectionPanel({ p }: { p: Project }) {
       <section class="insp-section">
         <h3>Zoom · {when(z)}</h3>
         <p class="muted small">
-          {(1 / z.box.w).toFixed(1)}× {z.auto ? "· suggested from your clicks" : ""}. Drag the frame
-          on the preview to move it; drag its corner to resize it.
+          {(1 / z.box.w).toFixed(1)}× {z.auto ? "· placed for you" : ""}. Drag the frame on the
+          preview to move it; drag its corner to resize it.
         </p>
         <Button size="sm" variant="ghost" icon="trash" onClick={remove}>
           Remove zoom
@@ -98,7 +98,9 @@ function SelectionPanel({ p }: { p: Project }) {
             update((x) => ({
               ...x,
               layouts: x.layouts.map((r) =>
-                r.id === l.id ? { ...r, layout: e.currentTarget.value as LayoutKind } : r,
+                r.id === l.id
+                  ? { ...r, layout: e.currentTarget.value as LayoutKind, auto: false }
+                  : r,
               ),
             }))
           }

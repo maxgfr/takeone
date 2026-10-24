@@ -1838,6 +1838,14 @@ select.input {
 .ai-tool > p {
   margin: 0;
 }
+.ai-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ai-change .ai-item-body > span:first-child {
+  overflow-wrap: anywhere;
+}
 .ai-run {
   display: flex;
   flex-direction: column;

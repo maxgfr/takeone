@@ -55,7 +55,7 @@ export function setLayout(
     ...p,
     layouts: [
       ...p.layouts.filter((l) => !covered(l)),
-      ...pieces.map((r) => ({ id: newId("l"), ...r, layout })),
+      ...pieces.map((r) => ({ id: newId("l"), ...r, layout, auto: false })),
     ],
   };
 }
@@ -89,7 +89,7 @@ export function addBlur(
 ): { project: Project; id: string | null } {
   const pieces = clipRanges(segments, range);
   if (!pieces.length) return { project: p, id: null };
-  const blurs = pieces.map((r) => ({ id: newId("b"), ...r, box }));
+  const blurs = pieces.map((r) => ({ id: newId("b"), ...r, box, auto: false }));
   return { project: { ...p, blurs: [...p.blurs, ...blurs] }, id: blurs[0]?.id ?? null };
 }
 

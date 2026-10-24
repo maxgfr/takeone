@@ -18,15 +18,15 @@ export type Overlay = (
   t: number,
 ) => void;
 
-type Frame = CanvasImageSource & { width: number; height: number };
+export type Frame = CanvasImageSource & { width: number; height: number };
 
-interface Track {
+export interface Track {
   next(): Promise<Frame | null>;
   dispose(): void;
 }
 
 /** The frames of one file at the given times (its own clock, non-decreasing), one per `next`. */
-async function frames(
+export async function mediaFrames(
   projectId: string,
   media: Media,
   times: number[],
@@ -112,9 +112,11 @@ export async function eachFrame(
         const shift = (m: Media) => times.map((x) => Math.max(0, x - m.offset));
         open = {
           clip: clip.id,
-          screen: clip.screen ? await frames(p.id, clip.screen, shift(clip.screen), maxSide) : null,
+          screen: clip.screen
+            ? await mediaFrames(p.id, clip.screen, shift(clip.screen), maxSide)
+            : null,
           camera: clip.camera
-            ? await frames(p.id, clip.camera, shift(clip.camera), Math.min(1280, maxSide))
+            ? await mediaFrames(p.id, clip.camera, shift(clip.camera), Math.min(1280, maxSide))
             : null,
         };
       }
