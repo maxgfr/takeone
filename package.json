@@ -12,13 +12,23 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "test": "bun test src scripts",
-    "test:e2e": "bun run build && playwright test"
+    "test:e2e": "bun run build && playwright test",
+    "catalog": "llm-models catalog --npm callable --require openai,anthropic,google,mistral --out public/models.json"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "4.0.87",
+    "@ai-sdk/google": "4.0.104",
+    "@ai-sdk/mistral": "4.0.71",
+    "@ai-sdk/openai": "4.0.101",
+    "@ai-sdk/openai-compatible": "3.0.77",
+    "@huggingface/transformers": "4.3.1",
     "@jitsi/rnnoise-wasm": "0.2.1",
     "@noble/curves": "2.4.0",
     "@noble/hashes": "2.4.0",
     "@preact/signals": "2.11.3",
+    "ai": "7.0.152",
+    "llm-connect": "2.3.0",
+    "llm-models": "1.13.0",
     "mediabunny": "1.62.1",
     "preact": "10.29.8",
     "zod": "4.6.7"

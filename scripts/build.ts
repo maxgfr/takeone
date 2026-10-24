@@ -11,7 +11,7 @@
  * another origin.
  */
 import { cp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..");
 
@@ -47,6 +47,7 @@ function headInject(): string {
 /** Workers built on their own; `define` is the global the app reads their URL from. */
 export const WORKERS: { entry: string; define: string }[] = [
   { entry: "src/workers/clock.ts", define: "__CLOCK_WORKER_URL__" },
+  { entry: "src/workers/whisper.ts", define: "__WHISPER_WORKER_URL__" },
 ];
 
 export interface BuildOptions {
@@ -114,6 +115,14 @@ export async function build(opts: BuildOptions = {}): Promise<{ outdir: string; 
     const out = res.outputs.find((o) => o.kind === "entry-point") ?? fail(`no ${w.entry} output`);
     defines[w.define] = JSON.stringify(`./${relative(outdir, out.path).split("\\").join("/")}`);
   }
+
+  // The one onnxruntime build transformers.js loads (WebGPU and WebAssembly), for Whisper on
+  // the device: served from this site, never from a CDN.
+  const transformers = dirname(Bun.resolveSync("@huggingface/transformers/package.json", ROOT));
+  const ort = join(dirname(Bun.resolveSync("onnxruntime-web/package.json", transformers)), "dist");
+  await mkdir(join(outdir, "ort"), { recursive: true });
+  for (const f of ["ort-wasm-simd-threaded.asyncify.mjs", "ort-wasm-simd-threaded.asyncify.wasm"])
+    await cp(join(ort, f), join(outdir, "ort", f));
 
   // 2. The app.
   const app = await Bun.build({
