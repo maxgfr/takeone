@@ -7,6 +7,7 @@
  */
 import { signal } from "@preact/signals";
 import type { Clip, Media, Project } from "../model/project";
+import { drawCaptionsAt } from "../render/captions";
 import {
   drawFrame,
   FULL,
@@ -226,6 +227,7 @@ export class PreviewEngine {
       view: this.fullView ? FULL : viewAt(p.zooms, clip.id, at.t),
       blurs: blurs.map((b) => b.box),
     });
+    if (p.style.captions.enabled) drawCaptionsAt(ctx, size.w, size.h, p, clip.id, at.t);
   }
 
   dispose(): void {

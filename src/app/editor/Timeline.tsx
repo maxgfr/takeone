@@ -1,11 +1,13 @@
 /**
  * The timeline, on the output's clock: the takes as they play (with a mark
- * where something was cut), then a row each for layouts, zooms and blurs.
+ * where something was cut), then a row each for layouts, zooms and blurs;
+ * chapters are marked on the ruler.
  * Click to move the playhead, drag across the video row to select a range,
  * click a block to select it.
  */
 import { signal } from "@preact/signals";
 import { useRef } from "preact/hooks";
+import { chapterMarks } from "../../edit/chapters";
 import type { PreviewEngine } from "../../edit/preview";
 import { outputSpans, type Range } from "../../edit/timeline";
 import { clock } from "../Record";
@@ -119,6 +121,16 @@ export function Timeline({ engine }: { engine: PreviewEngine | null }) {
           {ticks(total).map((t) => (
             <span key={t} class="tl-tick" style={{ left: pct(t) }}>
               {clock(t)}
+            </span>
+          ))}
+          {chapterMarks(p, segs).map(({ chapter, at }) => (
+            <span
+              key={chapter.id}
+              class="tl-chapter"
+              style={{ left: pct(at) }}
+              title={`${clock(at)} · ${chapter.title}`}
+            >
+              {chapter.title}
             </span>
           ))}
         </div>

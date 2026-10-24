@@ -15,6 +15,7 @@ import {
 import { BACKGROUNDS } from "../../render/compose";
 import { clock } from "../Record";
 import { Button, Field } from "../ui";
+import { CaptionsSection } from "./CaptionsSection";
 import { project, segments, selection, update } from "./state";
 
 export const LAYOUT_NAMES: Record<LayoutKind, string> = {
@@ -300,6 +301,7 @@ export function Inspector() {
           Mirror the camera
         </label>
       </section>
+      <CaptionsSection />
       <section class="insp-section">
         <h3>Sound</h3>
         <label class="slider">

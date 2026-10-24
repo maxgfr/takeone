@@ -14,6 +14,7 @@ import { LAYOUTS, type LayoutKind } from "../../model/project";
 import { clock } from "../Record";
 import { navigate } from "../router";
 import { Button, IconButton, toast } from "../ui";
+import { AiPanel, aiOpen } from "./AiPanel";
 import { ExportPanel } from "./ExportPanel";
 import { Inspector, LAYOUT_NAMES } from "./Inspector";
 import { Stage } from "./Stage";
@@ -178,6 +179,14 @@ export function Editor({ id }: { id: string }) {
         <span class="ed-spacer" />
         <IconButton icon="undo" label="Undo" disabled={!history.value.undo} onClick={undo} />
         <IconButton icon="redo" label="Redo" disabled={!history.value.redo} onClick={redo} />
+        <Button
+          icon="sparkles"
+          class="btn-ai"
+          aria-pressed={aiOpen.value}
+          onClick={() => (aiOpen.value = !aiOpen.value)}
+        >
+          AI
+        </Button>
         <Button icon="record" onClick={() => navigate(`#/record?project=${p.id}`)}>
           Add a take
         </Button>
@@ -231,7 +240,7 @@ export function Editor({ id }: { id: string }) {
             layout. Click a block to edit it.
           </p>
         </section>
-        <Inspector />
+        {aiOpen.value ? <AiPanel engine={engine.current} /> : <Inspector />}
       </div>
       {exporting.value && <ExportPanel onClose={() => (exporting.value = false)} />}
     </main>
