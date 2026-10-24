@@ -14,7 +14,8 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "bun scripts/serve.ts",
+    // The test server adds a local relay and tracker to dist/ (see test/serve.ts).
+    command: "bun test/e2e-server.ts",
     url: URL,
     env: { PORT: String(PORT) },
     reuseExistingServer: !process.env.CI,

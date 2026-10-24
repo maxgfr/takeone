@@ -1,4 +1,5 @@
-import { render } from "preact";
+import { type ComponentType, render } from "preact";
+import { useEffect, useState } from "preact/hooks";
 import { Editor } from "./app/editor/Editor";
 import { Home } from "./app/Home";
 import { Record } from "./app/Record";
@@ -18,12 +19,29 @@ function Brand() {
   );
 }
 
+/** The watch page and its peer-to-peer stack load on demand: the home page does not need them. */
+function WatchPage({ room }: { room: string }) {
+  const [Watch, setWatch] = useState<ComponentType<{ room: string }> | null>(null);
+  useEffect(() => {
+    void import("./app/Watch").then((m) => setWatch(() => m.Watch));
+  }, []);
+  return Watch ? (
+    <Watch key={room} room={room} />
+  ) : (
+    <main class="watch">
+      <div class="spinner" role="status" aria-label="Loading" />
+    </main>
+  );
+}
+
 /** The page for the current route (more pages arrive with each milestone). */
 function Page() {
   const r = route.value;
   switch (r.name) {
     case "record":
       return <Record projectId={r.project} />;
+    case "watch":
+      return <WatchPage room={r.room} />;
     default:
       return <Home />;
   }
