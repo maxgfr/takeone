@@ -141,10 +141,23 @@ export async function build(opts: BuildOptions = {}): Promise<{ outdir: string; 
   });
   assertOk(app, "app build");
 
-  // 3. Static files.
+  // 3. The standalone player: one file, inlined into exported HTML.
+  const player = await Bun.build({
+    entrypoints: [join(ROOT, "src/player/standalone.tsx")],
+    outdir: join(outdir, "player"),
+    minify,
+    target: "browser",
+    format: "esm",
+    naming: { entry: "player.js" },
+    define: env,
+  });
+  assertOk(player, "player build");
+  await cp(join(ROOT, "src/player/player.css"), join(outdir, "player/player.css"));
+
+  // 4. Static files.
   await cp(join(ROOT, "public"), outdir, { recursive: true });
 
-  // 4. Harden the page.
+  // 5. Harden the page.
   const path = join(outdir, "index.html");
   let html = await readFile(path, "utf8");
   if (!/<meta charset="utf-8"\s*\/?>/i.test(html))

@@ -27,6 +27,7 @@
     "@noble/hashes": "2.4.0",
     "@preact/signals": "2.11.3",
     "ai": "7.0.152",
+    "gifenc": "1.0.3",
     "llm-connect": "2.3.0",
     "llm-models": "1.13.0",
     "mediabunny": "1.62.1",
