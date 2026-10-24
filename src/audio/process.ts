@@ -2,10 +2,23 @@
  * The voice chain of an export: noise removal on each channel, then loudness
  * normalization of the whole program (one gain for every channel, so the
  * stereo image is kept) to −16 LUFS by default, the usual target for spoken
- * content online, with the sample peak kept under −1 dBFS.
+ * content online, then a look-ahead limiter that keeps the sample peak under
+ * −1 dBFS.
  */
 import { denoise } from "./denoise";
-import { blockPowers, gatedLoudness, normalizationGain, samplePeak } from "./loudness";
+import { limit } from "./limiter";
+import { blockPowers, gatedLoudness, integratedLoudness, normalizationGain } from "./loudness";
+
+/** The most the voice is ever raised: +30 dB. */
+const MAX_GAIN = 10 ** (30 / 20);
+
+function scaled(channels: readonly Float32Array[], gain: number): Float32Array[] {
+  return channels.map((ch) => {
+    const out = new Float32Array(ch.length);
+    for (let i = 0; i < ch.length; i++) out[i] = (ch[i] as number) * gain;
+    return out;
+  });
+}
 
 export interface VoiceInput {
   channels: Float32Array[];
@@ -63,16 +76,20 @@ export async function processVoice(
 
   const blocks = blockPowers(channels, sampleRate);
   const loudness = gatedLoudness(blocks);
-  const gain = opts.normalize
-    ? normalizationGain(blocks, samplePeak(channels), opts.target ?? -16)
-    : 1;
-  if (gain !== 1) {
-    const owned = opts.denoise; // the denoised arrays are ours to scale in place
-    channels = channels.map((ch) => {
-      const target = owned ? ch : new Float32Array(ch.length);
-      for (let i = 0; i < ch.length; i++) target[i] = (ch[i] as number) * gain;
-      return target;
-    });
+  let gain = 1;
+  if (opts.normalize && Number.isFinite(loudness)) {
+    const target = opts.target ?? -16;
+    // No cap from the peaks: the limiter holds them under the ceiling instead, so a voice with
+    // a few loud peaks still reaches the target.
+    gain = Math.min(MAX_GAIN, normalizationGain(blocks, 0, target));
+    let out = limit(scaled(channels, gain), sampleRate);
+    // Limiting takes a little loudness off the peaks: one more pass makes up for it.
+    const short = target - integratedLoudness(out, sampleRate);
+    if (short > 0.1 && gain < MAX_GAIN) {
+      gain = Math.min(MAX_GAIN, gain * 10 ** (short / 20));
+      out = limit(scaled(channels, gain), sampleRate);
+    }
+    channels = out;
   }
   onProgress?.(1);
   return { channels, sampleRate, gain, loudness };

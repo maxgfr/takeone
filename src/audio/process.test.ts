@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { mix, rms, voice, whiteNoise } from "./fixtures";
-import { gainFor, integratedLoudness, samplePeak } from "./loudness";
+import { integratedLoudness, samplePeak } from "./loudness";
 import { processVoice } from "./process";
 
 const RATE = 44_100;
@@ -30,16 +30,16 @@ describe("processVoice", () => {
     expect(seen.at(-1)).toBe(1);
   });
 
-  it("stops at the peak ceiling", async () => {
-    // A loud click in a quiet take: −16 LUFS would push it over −1 dBFS.
+  it("reaches the target with a loud peak, and holds the peak under the ceiling", async () => {
+    // A loud click in a quiet take: −14 LUFS would push it far over −1 dBFS.
     const take = voice(4, RATE, 0.01);
     take[RATE] = 0.9;
     const out = await processVoice(
       { channels: [take], sampleRate: RATE },
       { denoise: false, normalize: true, target: -14 },
     );
-    expect(20 * Math.log10(samplePeak(out.channels))).toBeCloseTo(-1, 4);
-    expect(integratedLoudness(out.channels, RATE)).toBeLessThan(-14);
+    expect(20 * Math.log10(samplePeak(out.channels))).toBeLessThanOrEqual(-1 + 1e-4);
+    expect(Math.abs(integratedLoudness(out.channels, RATE) - -14)).toBeLessThan(0.3);
   });
 
   it("leaves the input untouched", async () => {
@@ -57,8 +57,9 @@ describe("processVoice", () => {
     );
     expect(same.gain).toBe(1);
     expect(same.channels[0]).toBe(take);
-    // −16 LUFS by default, unless the peak would pass −1 dBFS.
-    expect(out.gain).toBeCloseTo(gainFor(same.loudness, samplePeak([take])), 3);
+    // −16 LUFS by default, the peaks held under −1 dBFS.
+    expect(Math.abs(integratedLoudness(out.channels, RATE) - -16)).toBeLessThan(0.3);
+    expect(samplePeak(out.channels)).toBeLessThanOrEqual(10 ** (-1 / 20) + 1e-6);
     expect(same.loudness).toBeCloseTo(integratedLoudness([take], RATE), 6);
   });
 
