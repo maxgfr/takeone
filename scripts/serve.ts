@@ -1,5 +1,14 @@
-/** Static server for dist/, used by the dev loop and the end-to-end tests. */
+/**
+ * Static server for dist/, used by the dev loop and the end-to-end tests. It sends the headers
+ * that isolate the page (GitHub Pages cannot: public/sw.js adds them there).
+ */
 import { join, normalize } from "node:path";
+
+export const ISOLATION = {
+  "Cross-Origin-Opener-Policy": "same-origin",
+  "Cross-Origin-Embedder-Policy": "require-corp",
+  "Cross-Origin-Resource-Policy": "same-origin",
+};
 
 export function serveApp(opts: { port: number; dir: string }) {
   return Bun.serve({
@@ -10,7 +19,7 @@ export function serveApp(opts: { port: number; dir: string }) {
       if (path === "" || path.endsWith("/")) path += "index.html";
       const file = Bun.file(join(opts.dir, normalize(path).replace(/^(\.\.[/\\])+/, "")));
       if (!(await file.exists())) return new Response("Not found", { status: 404 });
-      return new Response(file);
+      return new Response(file, { headers: ISOLATION });
     },
   });
 }

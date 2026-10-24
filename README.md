@@ -15,9 +15,9 @@ from recording to the 4K export, happens in your browser.
    pause, and floating controls with a teleprompter in a Picture-in-Picture window that a shared
    tab does not show. While you record, where the screen changes is noted for zooms. Add as many
    takes as you want.
-2. **Edit by text.** Each take is transcribed, timed to the word, by your AI provider
-   (OpenAI, Gemini, Mistral, Groq) or by Whisper running on this device (WebGPU or WebAssembly,
-   downloaded once). Select words and press Delete to cut them; click a struck-out word to bring it
+2. **Edit by text.** Each take is transcribed, timed to the word, on this device by NVIDIA
+   Parakeet (25 European languages, fillers kept, downloaded once), NVIDIA Canary (lighter) or
+   Whisper (other languages), or by your AI provider (OpenAI, Gemini, Mistral, Groq). Select words and press Delete to cut them; click a struck-out word to bring it
    back. Filler words (in 14 languages) and long pauses go in one click each.
 3. **Make it look finished.** Layouts per part (screen with a camera bubble, screen only, camera
    only, side by side) that slide from one to the next; zooms placed where you clicked, editable;
@@ -34,16 +34,16 @@ from recording to the 4K export, happens in your browser.
 The sound is cleaned up on export: noise removed with RNNoise, the voice levelled to −16 LUFS
 (EBU R128), the screen's own sound mixed in at the volume you set.
 
-|               |                                                                                                                                                                                                  |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Recording     | `getDisplayMedia` + `getUserMedia`, one `MediaRecorder` per source writing chunk by chunk to OPFS, remuxed afterwards by [mediabunny](https://mediabunny.dev) so the editor seeks fast.          |
-| Editing       | Cuts, layouts, zooms and blurs are ranges on each take's own clock: the output timeline is derived, so cutting a sentence moves everything after it and undo always works.                       |
-| Compositor    | One canvas function draws any instant of the edit, for the preview and every export, at any size and shape.                                                                                      |
-| Transcription | [llm-connect](https://github.com/maxgfr/llm-models/tree/main/packages/llm-connect): your provider's speech-to-text model, or Whisper on the device through transformers.js in a worker.          |
-| Exports       | WebCodecs through mediabunny (H.264/HEVC + AAC/Opus, VP9/AV1 + Opus), gifenc for GIFs.                                                                                                           |
-| Live links    | WebRTC data channels; peers find each other through public Nostr relays and WebTorrent trackers, every signaling message sealed with a key that only lives in the link's fragment.               |
-| AI            | Bring your own key (or a local OpenAI-compatible server such as Ollama); calls go straight from the browser to the provider. The key is encrypted at rest under a non-extractable WebCrypto key. |
-| Storage       | Projects in IndexedDB, media in OPFS. Nothing leaves the device unless you export it, share it, or send audio and text to the AI provider you chose.                                             |
+|               |                                                                                                                                                                                                                         |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Recording     | `getDisplayMedia` + `getUserMedia`, one `MediaRecorder` per source writing chunk by chunk to OPFS, remuxed afterwards by [mediabunny](https://mediabunny.dev) so the editor seeks fast.                                 |
+| Editing       | Cuts, layouts, zooms and blurs are ranges on each take's own clock: the output timeline is derived, so cutting a sentence moves everything after it and undo always works.                                              |
+| Compositor    | One canvas function draws any instant of the edit, for the preview and every export, at any size and shape.                                                                                                             |
+| Transcription | [llm-connect](https://github.com/maxgfr/llm-models/tree/main/packages/llm-connect): NVIDIA Parakeet or Canary (onnxruntime-web) or Whisper (transformers.js) in a worker, on several threads; or your provider's model. |
+| Exports       | WebCodecs through mediabunny (H.264/HEVC + AAC/Opus, VP9/AV1 + Opus), gifenc for GIFs.                                                                                                                                  |
+| Live links    | WebRTC data channels; peers find each other through public Nostr relays and WebTorrent trackers, every signaling message sealed with a key that only lives in the link's fragment.                                      |
+| AI            | Bring your own key (or a local OpenAI-compatible server such as Ollama); calls go straight from the browser to the provider. The key is encrypted at rest under a non-extractable WebCrypto key.                        |
+| Storage       | Projects in IndexedDB, media in OPFS. Nothing leaves the device unless you export it, share it, or send audio and text to the AI provider you chose.                                                                    |
 
 Shortcuts in the editor: `Space` play/pause, `←` `→` one second (`⇧` five), drag across the
 video row to select, `Delete` cuts the selection or the selected words, `⌘Z` / `⇧⌘Z` undo and redo,
@@ -55,11 +55,13 @@ video row to select, `Delete` cuts the selection or the selected words, `⌘Z` /
 ## Privacy
 
 - The page's Content-Security-Policy allows no inline script, no eval and no third-party script.
-  It connects only to `https:` APIs (your AI provider, the model catalog, Hugging Face for Whisper's
-  weights) and `wss:` relays and trackers for live links.
+  It connects only to `https:` APIs (your AI provider, the model catalog, Hugging Face for the speech
+  models' weights) and `wss:` relays and trackers for live links.
 - Recordings stay in your browser's storage. A live link sends the exported file to the people
   who open it, directly from your tab; relays and trackers only see sealed signaling messages.
-- Whisper on the device sends nothing anywhere once its weights are downloaded.
+- Speech to text on the device sends nothing anywhere once the model is downloaded. A service
+  worker (`sw.js`) only adds the headers that isolate the page, so the model can run on several
+  threads; it caches nothing.
 
 ## For AI agents
 

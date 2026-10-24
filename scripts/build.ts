@@ -6,7 +6,7 @@
  * The CSP lets the page call any https API (the user's AI provider, Hugging
  * Face for on-device models) and wss: (the relays and trackers that introduce
  * peers to each other), and nothing else: no inline script, no eval, no
- * third-party script. WebAssembly may be compiled (noise removal, Whisper).
+ * third-party script. WebAssembly may be compiled (noise removal, speech to text).
  * The build fails if index.html has an inline script or a reference to
  * another origin.
  */
@@ -57,7 +57,7 @@ function headInject(): string {
 /** Workers built on their own; `define` is the global the app reads their URL from. */
 export const WORKERS: { entry: string; define: string }[] = [
   { entry: "src/workers/clock.ts", define: "__CLOCK_WORKER_URL__" },
-  { entry: "src/workers/whisper.ts", define: "__WHISPER_WORKER_URL__" },
+  { entry: "src/workers/speech.ts", define: "__SPEECH_WORKER_URL__" },
 ];
 
 export interface BuildOptions {
@@ -126,8 +126,8 @@ export async function build(opts: BuildOptions = {}): Promise<{ outdir: string; 
     defines[w.define] = JSON.stringify(`./${relative(outdir, out.path).split("\\").join("/")}`);
   }
 
-  // The one onnxruntime build transformers.js loads (WebGPU and WebAssembly), for Whisper on
-  // the device: served from this site, never from a CDN.
+  // The one onnxruntime build both llm-connect/nemo and transformers.js load (WebGPU and
+  // WebAssembly), for speech to text on the device: served from this site, never from a CDN.
   const transformers = dirname(Bun.resolveSync("@huggingface/transformers/package.json", ROOT));
   const ort = join(dirname(Bun.resolveSync("onnxruntime-web/package.json", transformers)), "dist");
   await mkdir(join(outdir, "ort"), { recursive: true });

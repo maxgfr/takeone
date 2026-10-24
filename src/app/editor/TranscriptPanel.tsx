@@ -13,7 +13,9 @@ import type { PreviewEngine } from "../../edit/preview";
 import { outputTime, sourceAt } from "../../edit/timeline";
 import {
   defaultEngine,
+  ENGINES,
   type Engine,
+  engineProblem,
   providerCanTranscribe,
   transcribeClip,
   voiceOf,
@@ -27,7 +29,8 @@ const ENGINE_KEY = "takeone-transcriber";
 function loadEngine(): Engine | null {
   try {
     const v = localStorage.getItem(ENGINE_KEY);
-    return v === "provider" || v === "device-fast" || v === "device-accurate" ? v : null;
+    // Older choices (Whisper's presets) are forgotten: the default is better now.
+    return ENGINES.find((e) => e === v) ?? null;
   } catch {
     return null;
   }
@@ -35,7 +38,7 @@ function loadEngine(): Engine | null {
 const engineChoice = signal<Engine | null>(loadEngine());
 
 const SPOKEN_KEY = "takeone-spoken-language";
-/** The language spoken in the takes: the browser's until chosen (Whisper does not detect it). */
+/** The language spoken in the takes: the browser's until chosen (Whisper and Canary need it). */
 function loadSpoken(): string {
   try {
     const v = localStorage.getItem(SPOKEN_KEY);
@@ -105,7 +108,12 @@ function Take({
   const run = async () => {
     await loadLlmSettings();
     const settings = savedSettings();
-    const choice = engineChoice.value ?? defaultEngine(settings);
+    const choice = engineChoice.value ?? defaultEngine(spoken.value);
+    const problem = engineProblem(choice, spoken.value, settings);
+    if (problem) {
+      toast(problem, "error", 8000);
+      return;
+    }
     busy.value = { ...busy.value, [clip.id]: "Starting…" };
     try {
       const transcript = await transcribeClip(
@@ -245,7 +253,8 @@ export function TranscriptPanel({ engine }: { engine: PreviewEngine | null }) {
 
   if (!p) return null;
   const settings = savedSettings();
-  const choice = engineChoice.value ?? defaultEngine(settings);
+  const choice = engineChoice.value ?? defaultEngine(spoken.value);
+  const problem = engineProblem(choice, spoken.value, settings);
   const fillers = p.clips.flatMap((c) => fillerCuts(c, p.cuts));
   const pauses = p.clips.flatMap((c) => silenceCuts(c, p.cuts));
   const cleanups = p.cuts.filter((c) => c.reason === "filler" || c.reason === "silence");
@@ -263,11 +272,12 @@ export function TranscriptPanel({ engine }: { engine: PreviewEngine | null }) {
           value={choice}
           onChange={(e) => setEngine(e.currentTarget.value as Engine)}
         >
+          <option value="parakeet">This device: NVIDIA Parakeet (best, 670 MB once)</option>
+          <option value="canary">This device: NVIDIA Canary (lighter, 215 MB once)</option>
+          <option value="whisper">This device: Whisper (other languages)</option>
           <option value="provider" disabled={!providerCanTranscribe(settings)}>
             Your AI provider{providerCanTranscribe(settings) ? "" : " (not set up)"}
           </option>
-          <option value="device-fast">This device: fast (80 MB once)</option>
-          <option value="device-accurate">This device: accurate (600 MB, GPU)</option>
         </select>
         <select
           class="input input-sm"
@@ -286,6 +296,7 @@ export function TranscriptPanel({ engine }: { engine: PreviewEngine | null }) {
           AI settings
         </button>
       </header>
+      {problem && <p class="field-hint tr-problem">{problem}</p>}
       {transcribed && (
         <div class="tr-clean">
           <Button
