@@ -8,8 +8,10 @@
 import { signal, useSignal } from "@preact/signals";
 import { render } from "preact";
 import { useEffect, useRef } from "preact/hooks";
+import { finalizeClip } from "../capture/finalize";
 import { levelMeter, listDevices, openCamera, openMic } from "../capture/media";
 import { openSources, RecordingSession } from "../capture/session";
+import { suggestZooms } from "../edit/zooms";
 import { type Clip, emptyProject } from "../model/project";
 import { getProject, saveProject } from "../model/store";
 import { navigate } from "./router";
@@ -85,7 +87,8 @@ async function keep(clip: Clip, s: RecordingSession, title: string): Promise<str
   // The take's files were written under the session's project id: a new project takes it.
   const existing = await getProject(s.projectId);
   const p = existing ?? { ...emptyProject(title), id: s.projectId };
-  const next = { ...p, clips: [...p.clips, clip] };
+  // Zooms where the screen changed, ready to keep or remove.
+  const next = { ...p, clips: [...p.clips, clip], zooms: [...p.zooms, ...suggestZooms(clip)] };
   await saveProject(next);
   return next.id;
 }
@@ -278,7 +281,9 @@ export function Record({ projectId }: { projectId: string | null }) {
     pipWindow = null;
     const s = session;
     try {
-      const clip = await s.stop();
+      const recorded = await s.stop();
+      // The files become seekable (duration and index) before the editor opens them.
+      const clip = await finalizeClip(s.projectId, recorded);
       session = null;
       if (clip.duration < 0.5) {
         toast("That take was too short to keep.", "error");
@@ -355,7 +360,7 @@ export function Record({ projectId }: { projectId: string | null }) {
               <span class="rec-time">{clock(elapsed.value)}</span>
               <span class="muted">
                 {status.value === "saving"
-                  ? "Saving…"
+                  ? "Saving and preparing the take for editing…"
                   : status.value === "opening"
                     ? "Choose what to share…"
                     : paused.value

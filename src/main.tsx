@@ -1,6 +1,6 @@
 import { render } from "preact";
+import { Editor } from "./app/editor/Editor";
 import { Home } from "./app/Home";
-import { ProjectPage } from "./app/ProjectPage";
 import { Record } from "./app/Record";
 import { route } from "./app/router";
 import { Icon, Toasts } from "./app/ui";
@@ -24,14 +24,20 @@ function Page() {
   switch (r.name) {
     case "record":
       return <Record projectId={r.project} />;
-    case "edit":
-      return <ProjectPage id={r.id} />;
     default:
       return <Home />;
   }
 }
 
 function App() {
+  // The editor takes the whole window.
+  if (route.value.name === "edit")
+    return (
+      <>
+        <Editor id={route.value.id} />
+        <Toasts />
+      </>
+    );
   return (
     <div class="shell">
       <header class="topbar">
