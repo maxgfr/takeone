@@ -14,6 +14,7 @@ import { LAYOUTS, type LayoutKind } from "../../model/project";
 import { clock } from "../Record";
 import { navigate } from "../router";
 import { Button, IconButton, toast } from "../ui";
+import { ExportPanel } from "./ExportPanel";
 import { Inspector, LAYOUT_NAMES } from "./Inspector";
 import { Stage } from "./Stage";
 import {
@@ -64,6 +65,7 @@ function workingRange(t: number): Range {
 export function Editor({ id }: { id: string }) {
   const loaded = useSignal<"loading" | "ok" | "missing">("loading");
   const engine = useRef<PreviewEngine | null>(null);
+  const exporting = useSignal(false);
   const ready = useSignal(false);
 
   useEffect(() => {
@@ -179,6 +181,9 @@ export function Editor({ id }: { id: string }) {
         <Button icon="record" onClick={() => navigate(`#/record?project=${p.id}`)}>
           Add a take
         </Button>
+        <Button variant="primary" icon="download" onClick={() => (exporting.value = true)}>
+          Export
+        </Button>
       </header>
       <div class="ed-main">
         <TranscriptPanel engine={engine.current} />
@@ -228,6 +233,7 @@ export function Editor({ id }: { id: string }) {
         </section>
         <Inspector />
       </div>
+      {exporting.value && <ExportPanel onClose={() => (exporting.value = false)} />}
     </main>
   );
 }

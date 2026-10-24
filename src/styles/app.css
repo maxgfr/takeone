@@ -1662,3 +1662,64 @@ select.input {
   font-size: 13px;
   font-weight: 550;
 }
+
+/* --- Export ------------------------------------------------------------- */
+
+.export {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.export-kinds {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.export-kind {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.export-kind .icon {
+  color: var(--accent);
+}
+.export-kind span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.export-kind.is-on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.busy {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.busy progress {
+  flex: 1;
+  accent-color: var(--accent);
+}
+@media (max-width: 760px) {
+  .export-kinds,
+  .grid-3 {
+    grid-template-columns: 1fr;
+  }
+}
