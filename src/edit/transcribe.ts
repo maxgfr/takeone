@@ -1,9 +1,10 @@
 /**
  * Transcribing a take: its voice (the microphone's file, else the screen's
- * sound) goes to the provider's speech-to-text model through llm-connect, or
- * to Whisper on this device in a worker. Times come back on the file's clock
- * and are moved onto the take's (the microphone opens a little after the
- * screen).
+ * sound) goes to NVIDIA Parakeet or Canary on this device, Whisper for the
+ * languages they do not know, or the provider's speech-to-text model through
+ * llm-connect. The device engines run in a worker. Times come back on the
+ * file's clock and are moved onto the take's (the microphone opens a little
+ * after the screen).
  */
 import {
   type LlmSettings,
@@ -12,25 +13,47 @@ import {
   transcribe,
   transcriptionProblem,
 } from "llm-connect";
-import type { WhisperPreset } from "llm-connect/whisper";
+import { NEMO_MODELS, nemoSupports } from "llm-connect/nemo";
 import type { Clip, Media } from "../model/project";
 import { getMedia } from "../model/store";
-import type { WhisperReply, WhisperRequest } from "../workers/whisper";
+import type { DeviceEngine, SpeechReply, SpeechRequest } from "../workers/speech";
 
-declare const __WHISPER_WORKER_URL__: string;
+declare const __SPEECH_WORKER_URL__: string;
 
-export type Engine = "provider" | "device-fast" | "device-accurate";
+export type Engine = "provider" | DeviceEngine;
+export const ENGINES: readonly Engine[] = ["parakeet", "canary", "whisper", "provider"];
 
-/** The provider when it can transcribe (a custom endpoint would need a model name), else the device. */
-export function defaultEngine(settings: LlmSettings | null): Engine {
-  return settings && !settings.customEndpoint && !transcriptionProblem(settings)
-    ? "provider"
-    : "device-fast";
+/** On this device: Parakeet when it knows the language, Whisper otherwise. */
+export function defaultEngine(language: string): Engine {
+  return nemoSupports("parakeet", language) ? "parakeet" : "whisper";
+}
+
+/** Why an engine cannot transcribe this language or with these settings, or null. */
+export function engineProblem(
+  engine: Engine,
+  language: string,
+  settings: LlmSettings | null,
+): string | null {
+  if (engine === "provider") {
+    if (!settings) return "Set up a model first, or transcribe on this device.";
+    if (settings.customEndpoint) return "A custom endpoint needs a transcription model name.";
+    return transcriptionProblem(settings)?.message ?? null;
+  }
+  if (engine === "whisper") return null;
+  return nemoSupports(engine, language)
+    ? null
+    : `${NEMO_MODELS[engine].name} does not know this language: pick Whisper.`;
 }
 
 export function providerCanTranscribe(settings: LlmSettings | null): boolean {
-  return defaultEngine(settings) === "provider";
+  return engineProblem("provider", "en", settings) === null;
 }
+
+const NAMES: Record<DeviceEngine, string> = {
+  parakeet: "NVIDIA Parakeet",
+  canary: "NVIDIA Canary",
+  whisper: "Whisper",
+};
 
 /** The file holding the take's voice. */
 export function voiceOf(clip: Clip): Media | null {
@@ -45,15 +68,16 @@ function shift(t: Transcript, offset: number): Transcript {
   return { ...t, segments: t.segments.map(move), words: t.words.map(move) };
 }
 
-function whisper(
+function onDevice(
   samples: Float32Array,
-  preset: WhisperPreset,
+  engine: DeviceEngine,
   onProgress: (message: string) => void,
   signal?: AbortSignal,
   language?: string,
 ): Promise<Transcript> {
-  const url = typeof __WHISPER_WORKER_URL__ === "string" ? __WHISPER_WORKER_URL__ : "./whisper.js";
+  const url = typeof __SPEECH_WORKER_URL__ === "string" ? __SPEECH_WORKER_URL__ : "./speech.js";
   const worker = new Worker(url, { type: "module" });
+  const name = NAMES[engine];
   return new Promise<Transcript>((resolve, reject) => {
     const end = () => worker.terminate();
     signal?.addEventListener("abort", () => {
@@ -62,13 +86,15 @@ function whisper(
     });
     worker.onerror = (e) => {
       end();
-      reject(new Error(e.message || "Whisper could not start in this browser."));
+      reject(new Error(e.message || `${name} could not start in this browser.`));
     };
-    worker.onmessage = (e: MessageEvent<WhisperReply>) => {
+    worker.onmessage = (e: MessageEvent<SpeechReply>) => {
       const r = e.data;
       if (r.kind === "progress")
-        onProgress(`Downloading Whisper, once: ${Math.round(r.ratio * 100)} %`);
-      else if (r.kind === "loaded") onProgress(`Transcribing on this device (${r.device})…`);
+        onProgress(`Downloading ${name}, once: ${Math.round(r.ratio * 100)} %`);
+      else if (r.kind === "loaded") onProgress(`Transcribing on this device with ${name}…`);
+      else if (r.kind === "working")
+        onProgress(`Transcribing on this device with ${name}: ${Math.round(r.ratio * 100)} %`);
       else if (r.kind === "done") {
         end();
         resolve(r.transcript);
@@ -77,7 +103,7 @@ function whisper(
         reject(new Error(r.message));
       }
     };
-    const request: WhisperRequest = { samples, preset, ...(language ? { language } : {}) };
+    const request: SpeechRequest = { samples, engine, ...(language ? { language } : {}) };
     worker.postMessage(request, [samples.buffer]);
   });
 }
@@ -90,7 +116,7 @@ export async function transcribeClip(
   settings: LlmSettings | null,
   onProgress: (message: string) => void,
   signal?: AbortSignal,
-  /** ISO 639-1 code of the spoken language: Whisper on the device does not detect it. */
+  /** ISO 639-1 code of the spoken language: Whisper and Canary need it, Parakeet finds it. */
   language?: string,
 ): Promise<Transcript> {
   const voice = voiceOf(clip);
@@ -107,15 +133,8 @@ export async function transcribeClip(
     });
   } else {
     onProgress("Reading the sound…");
-    const { decodeAudio } = await import("llm-connect/whisper");
-    const samples = await decodeAudio(blob);
-    t = await whisper(
-      samples,
-      engine === "device-accurate" ? "accurate" : "fast",
-      onProgress,
-      signal,
-      language,
-    );
+    const { decodeAudio } = await import("llm-connect/nemo");
+    t = await onDevice(await decodeAudio(blob), engine, onProgress, signal, language);
   }
   return shift(t, voice.offset);
 }

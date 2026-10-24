@@ -21,7 +21,7 @@ const FEATURES: { icon: IconName; title: string; body: string }[] = [
   {
     icon: "sparkles",
     title: "Your AI, or none at all",
-    body: "Bring your own key for titles, chapters and one-click clean-ups, or transcribe with Whisper right on this device.",
+    body: "Bring your own key for titles, chapters and one-click clean-ups, or transcribe right on this device with NVIDIA Parakeet.",
   },
   {
     icon: "share",

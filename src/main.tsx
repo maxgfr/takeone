@@ -2,6 +2,7 @@ import { type ComponentType, render } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { Editor } from "./app/editor/Editor";
 import { Home } from "./app/Home";
+import { isolate } from "./app/isolation";
 import { Record } from "./app/Record";
 import { route } from "./app/router";
 import { Icon, Toasts } from "./app/ui";
@@ -93,3 +94,4 @@ function App() {
 
 const root = document.getElementById("app");
 if (root) render(<App />, root);
+isolate();
