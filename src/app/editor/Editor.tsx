@@ -31,6 +31,7 @@ import {
   update,
 } from "./state";
 import { range, Timeline } from "./Timeline";
+import { TranscriptPanel } from "./TranscriptPanel";
 
 /** These read the clock every frame: kept small so the rest of the editor does not redraw. */
 function PlayButton({ engine }: { engine: PreviewEngine | null }) {
@@ -180,6 +181,7 @@ export function Editor({ id }: { id: string }) {
         </Button>
       </header>
       <div class="ed-main">
+        <TranscriptPanel engine={engine.current} />
         <section class="ed-center">
           <Stage engine={engine.current} onCanvas={onCanvas} />
           <div class="transport">

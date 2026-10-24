@@ -12,7 +12,8 @@
       "!test-results",
       "!playwright-report",
 
-      "!public/vendor"
+      "!public/vendor",
+      "!public/models.json"
     ]
   },
   "formatter": {
