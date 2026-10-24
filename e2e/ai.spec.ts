@@ -74,15 +74,11 @@ function bottomPixels(page: Page): Promise<number[]> {
   });
 }
 
-function changed(a: number[], b: number[]): number {
+/** Near-black pixels: the captions' band (the screen and the background have none). */
+function dark(px: number[]): number {
   let n = 0;
-  for (let i = 0; i < a.length; i += 4) {
-    const d =
-      Math.abs((a[i] ?? 0) - (b[i] ?? 0)) +
-      Math.abs((a[i + 1] ?? 0) - (b[i + 1] ?? 0)) +
-      Math.abs((a[i + 2] ?? 0) - (b[i + 2] ?? 0));
-    if (d > 60) n++;
-  }
+  for (let i = 0; i < px.length; i += 4)
+    if ((px[i] ?? 0) + (px[i + 1] ?? 0) + (px[i + 2] ?? 0) < 90) n++;
   return n;
 }
 
@@ -150,13 +146,16 @@ test("the AI cuts a retake and finds chapters; captions show on the preview", as
   expect(asked).toEqual(["retakes", "chapters"]);
   await panel.getByRole("button", { name: "Close the AI panel" }).click();
 
-  // Captions: drawn on the preview where a word is being said
-  await page.locator(".w", { hasText: "dashboard" }).click();
-  await page.waitForTimeout(400);
-  const before = await bottomPixels(page);
+  // Captions: their dark band shows at the bottom of the preview while a sentence is said.
+  // One second in (the retake is cut), "so this is the dashboard." is being said.
+  await page.locator("body").click({ position: { x: 5, y: 5 } });
+  for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator(".tc")).toHaveText(/^0:01 /);
+  const before = dark(await bottomPixels(page));
   await page.getByLabel("Show captions").check();
-  await expect.poll(async () => changed(before, await bottomPixels(page))).toBeGreaterThan(800);
+  await expect.poll(async () => dark(await bottomPixels(page)) - before).toBeGreaterThan(2000);
   await page.getByLabel("Show captions").uncheck();
-  await expect.poll(async () => changed(before, await bottomPixels(page))).toBeLessThan(200);
+  await expect.poll(async () => dark(await bottomPixels(page)) - before).toBeLessThan(500);
   expect(errors).toEqual([]);
 });
