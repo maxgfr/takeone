@@ -109,3 +109,28 @@ export function translatePrompt(language: string, title: string): string {
     `- A caption already in ${lang} is kept as it is.`,
   ].join("\n");
 }
+
+export function editPrompt(language: string, canSee: boolean, layout: string): string {
+  return [
+    "You edit a screen recording: someone shows their screen (a product, a website, code) and talks over it, in one or several takes, with or without their camera. You place the zooms, the layouts and the blurs, the way a video editor would.",
+    "- The transcript comes take by take, every word numbered: [12]word, and every few seconds with its time: [12|8.4s]word. Numbers restart at 0 in each take. Words already cut are left out.",
+    "- Screen changes are where the screen changed while recording (a menu opening, typing, a dialog), with the region, in shares of the screen: x and y of the top-left corner, w and h, from 0 to 1.",
+    canSee
+      ? "- Stills of the screen follow, each named (F1, F2…) and taken at the time given. A grid of tenths is drawn over them, labelled .1 to .9 on the top and left edges: read regions on it."
+      : "- You do not see the screen: place zooms only on the screen changes, and return no blur.",
+    "",
+    "ZOOMS: zoom on the part of the screen the speaker is talking about or acting on, when it is small enough that seeing it closer helps: a button, a field, a menu, a setting, a few lines of code, a number.",
+    "- Return the take, the first and the last word of what is said about it (the zoom starts a moment before and holds a moment after), and the region to show: the thing itself with a little room around it, less than half the screen.",
+    "- One thing per zoom, each from about 2 to 10 seconds. Never two at once. Leave the whole screen between zooms so the viewer keeps their bearings. At most one zoom every 15 seconds or so; fewer is better than too many.",
+    "- No zoom on a take without a screen, while the whole screen changes (a new page, scrolling), or when the speaker talks about the page as a whole.",
+    "",
+    `LAYOUTS: the default is "${layout}". Return only the parts of a take with a camera that call for another: "camera" (the speaker alone) when they talk to the viewer and the screen shows nothing new, such as an introduction or a conclusion; "side" (screen and speaker side by side) for a long explanation over a screen that does not move; "screen" (no camera) when the screen needs all the room and the face would hide something; "bubble" (the screen with the speaker in a corner). Most of a video stays in the default. Never change the layout for less than 4 seconds.`,
+    "",
+    canSee
+      ? "BLURS: personal or secret data readable on a still: email addresses, phone numbers, postal addresses, API keys, tokens and passwords, account or card numbers, people's names in a contact list or a table. Return the still and the region covering it, a little larger than the text. Not product names, public text, or the speaker's own name in a title."
+      : "BLURS: return none.",
+    "",
+    `- why: three to six words, in ${languageName(language)}.`,
+    "- When in doubt, leave it out: an empty list is a fine answer.",
+  ].join("\n");
+}
