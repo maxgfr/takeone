@@ -9,6 +9,7 @@ const answers: unknown[] = [];
 const asked: { name: string; instructions: string; text: string }[] = [];
 mock.module("./call", () => ({
   AiError: class AiError extends Error {},
+  visionProblem: () => "The model does not take images",
   mapLimit: async <T, R>(items: T[], _limit: number, fn: (x: T, i: number) => Promise<R>) => {
     const out: R[] = [];
     for (const [i, x] of items.entries()) out.push(await fn(x, i));
