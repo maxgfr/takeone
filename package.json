@@ -28,7 +28,7 @@
     "@preact/signals": "2.11.3",
     "ai": "7.0.152",
     "gifenc": "1.0.3",
-    "llm-connect": "2.3.0",
+    "llm-connect": "2.3.1",
     "llm-models": "1.13.0",
     "mediabunny": "1.62.1",
     "preact": "10.29.8",

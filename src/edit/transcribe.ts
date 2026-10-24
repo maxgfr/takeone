@@ -50,6 +50,7 @@ function whisper(
   preset: WhisperPreset,
   onProgress: (message: string) => void,
   signal?: AbortSignal,
+  language?: string,
 ): Promise<Transcript> {
   const url = typeof __WHISPER_WORKER_URL__ === "string" ? __WHISPER_WORKER_URL__ : "./whisper.js";
   const worker = new Worker(url, { type: "module" });
@@ -76,7 +77,7 @@ function whisper(
         reject(new Error(r.message));
       }
     };
-    const request: WhisperRequest = { samples, preset };
+    const request: WhisperRequest = { samples, preset, ...(language ? { language } : {}) };
     worker.postMessage(request, [samples.buffer]);
   });
 }
@@ -89,6 +90,8 @@ export async function transcribeClip(
   settings: LlmSettings | null,
   onProgress: (message: string) => void,
   signal?: AbortSignal,
+  /** ISO 639-1 code of the spoken language: Whisper on the device does not detect it. */
+  language?: string,
 ): Promise<Transcript> {
   const voice = voiceOf(clip);
   if (!voice) throw new Error("This take has no sound to transcribe.");
@@ -98,7 +101,10 @@ export async function transcribeClip(
   if (engine === "provider") {
     if (!settings) throw new Error("Set up a model first, or transcribe on this device.");
     onProgress("Transcribing with your provider…");
-    t = await transcribe(settings, blob, signal ? { abortSignal: signal } : {});
+    t = await transcribe(settings, blob, {
+      ...(signal ? { abortSignal: signal } : {}),
+      ...(language ? { language } : {}),
+    });
   } else {
     onProgress("Reading the sound…");
     const { decodeAudio } = await import("llm-connect/whisper");
@@ -108,6 +114,7 @@ export async function transcribeClip(
       engine === "device-accurate" ? "accurate" : "fast",
       onProgress,
       signal,
+      language,
     );
   }
   return shift(t, voice.offset);
