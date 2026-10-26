@@ -2,7 +2,8 @@
  * The editor: the preview, the timeline under it, and the settings beside it.
  * The toolbar acts on the range selected on the timeline (or a couple of
  * seconds from the playhead): cut it, zoom on it, blur something in it, give
- * it another layout.
+ * it another layout. A voice-over is recorded from the transport, over the
+ * edited video; the rest of the editor waits meanwhile.
  */
 import { useSignal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
@@ -34,6 +35,7 @@ import {
 } from "./state";
 import { range, Timeline } from "./Timeline";
 import { TranscriptPanel } from "./TranscriptPanel";
+import { dubbing, VoiceoverButton } from "./Voiceover";
 
 /** These read the clock every frame: kept small so the rest of the editor does not redraw. */
 function PlayButton({ engine }: { engine: PreviewEngine | null }) {
@@ -98,6 +100,8 @@ export function Editor({ id }: { id: string }) {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement;
       if (el.closest("input, textarea, select, [contenteditable]")) return;
+      // While a voice-over records, only Space (which stops it) acts.
+      if (dubbing.value !== "idle" && e.key !== " ") return;
       const eng = engine.current;
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "z") {
@@ -133,6 +137,7 @@ export function Editor({ id }: { id: string }) {
   if (!p) return <main class="editor" />;
 
   const t = () => engine.current?.time.peek() ?? 0;
+  const locked = dubbing.value !== "idle";
 
   const cut = () => {
     const r = range.value;
@@ -167,7 +172,7 @@ export function Editor({ id }: { id: string }) {
 
   return (
     <main class="editor">
-      <header class="ed-top">
+      <header class="ed-top" inert={locked}>
         <IconButton icon="back" label="Home" onClick={() => navigate("#/")} />
         <input
           class="ed-title"
@@ -195,14 +200,19 @@ export function Editor({ id }: { id: string }) {
         </Button>
       </header>
       <div class="ed-main">
-        <TranscriptPanel engine={engine.current} />
+        <div class="ed-lock" inert={locked}>
+          <TranscriptPanel engine={engine.current} />
+        </div>
         <section class="ed-center">
           <Stage engine={engine.current} onCanvas={onCanvas} />
           <div class="transport">
-            <PlayButton engine={engine.current} />
+            <span class="ed-lock" inert={locked}>
+              <PlayButton engine={engine.current} />
+            </span>
             <TimeCode engine={engine.current} />
+            <VoiceoverButton engine={engine.current} />
             <span class="ed-spacer" />
-            <div class="toolbar" role="toolbar" aria-label="Edit">
+            <div class="toolbar" role="toolbar" aria-label="Edit" inert={locked}>
               <Button size="sm" icon="trash" disabled={!range.value} onClick={cut}>
                 Cut
               </Button>
@@ -234,13 +244,17 @@ export function Editor({ id }: { id: string }) {
               </Button>
             </div>
           </div>
-          <Timeline engine={engine.current} />
+          <div class="ed-lock" inert={locked}>
+            <Timeline engine={engine.current} />
+          </div>
           <p class="muted small ed-hint">
             Space plays. Drag across the video row to select, then Cut (Delete), Zoom, Blur or a
             layout. Click a block to edit it.
           </p>
         </section>
-        {aiOpen.value ? <AiPanel engine={engine.current} /> : <Inspector />}
+        <div class="ed-lock" inert={locked}>
+          {aiOpen.value ? <AiPanel engine={engine.current} /> : <Inspector />}
+        </div>
       </div>
       {exporting.value && <ExportPanel onClose={() => (exporting.value = false)} />}
     </main>

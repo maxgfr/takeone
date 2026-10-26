@@ -49,6 +49,7 @@ test("the take is transcribed, then edited by its words", async ({ page, context
   await expect(page.getByLabel("Title")).toHaveValue("Talking take", { timeout: 20_000 });
 
   // Your own key, for the provider's speech-to-text model
+  await page.locator(".tr-settings summary").click();
   await page.getByRole("button", { name: "AI settings" }).click();
   await page.getByLabel("Provider").selectOption("openai");
   await page.getByLabel("API key").fill("sk-test");
@@ -85,6 +86,59 @@ test("the take is transcribed, then edited by its words", async ({ page, context
   // Clicking a kept word moves the playhead there
   await page.locator(".w", { hasText: "dashboard" }).click();
   await expect(page.locator(".tc")).not.toHaveText(/^0:00 \/ 0:00/);
+
+  // A word the model got wrong is corrected in place
+  await page.locator(".w", { hasText: "dashboard" }).dblclick();
+  await page.getByLabel("Correct the word").fill("homepage.");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".w").last()).toHaveText("homepage. ");
+
+  // The voice was only for the transcript: muted, its text stays
+  const take = page.getByRole("region", { name: "Take 1" });
+  await take.getByRole("button", { name: "Muted" }).click();
+  await expect(take.getByRole("button", { name: "Muted" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".w")).toHaveCount(WORDS.length);
+  expect(errors).toEqual([]);
+});
+
+test("a take with no voice gets its text typed, then is cut by it", async ({ page, context }) => {
+  await context.grantPermissions(["camera", "microphone"]);
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.route(/models\.dev|openrouter\.ai/, (r) => r.abort());
+
+  await page.goto("./#/record");
+  await page.getByLabel("Name").fill("Silent take");
+  await page.getByLabel("Camera", { exact: true }).selectOption("none");
+  await page.getByLabel("Microphone", { exact: true }).selectOption("none");
+  await page.getByLabel("With the tab's or system's sound").uncheck();
+  await page.getByRole("button", { name: "Start recording" }).click();
+  await expect(page.getByText("Recording", { exact: true })).toBeVisible({ timeout: 10_000 });
+  await page.waitForTimeout(3200);
+  await page.getByRole("button", { name: /Stop/ }).first().click();
+  await expect(page.getByLabel("Title")).toHaveValue("Silent take", { timeout: 20_000 });
+
+  const take = page.getByRole("region", { name: "Take 1" });
+  await expect(take.getByRole("button", { name: "Transcribe", exact: true })).toBeDisabled();
+  await take.getByRole("button", { name: "Write the text" }).click();
+  await take.getByLabel("Text of take 1").fill("Here is the dashboard. And here are the people.");
+  await take.getByRole("button", { name: "Save the text" }).click();
+  await expect(page.locator(".w")).toHaveCount(9);
+  await expect(take.getByText("Typed: times are estimated")).toBeVisible();
+
+  const before = await length(page);
+  await page.locator(".w", { hasText: "And" }).evaluate((first) => {
+    const last = first.parentElement?.lastElementChild as Element;
+    const range = document.createRange();
+    range.setStart(first.firstChild as Node, 0);
+    range.setEnd(last.firstChild as Node, 1);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  });
+  await page.keyboard.press("Delete");
+  await expect(page.locator(".w.is-cut")).toHaveCount(5);
+  await expect.poll(() => length(page)).toBeLessThan(before);
   expect(errors).toEqual([]);
 });
 

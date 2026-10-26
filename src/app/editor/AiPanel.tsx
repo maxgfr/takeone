@@ -1,11 +1,11 @@
 /**
- * The AI panel, in place of the settings while it is open: the AI edit (zooms,
- * layouts, blurs, cuts and chapters placed in one go, each change listed to
- * keep or drop), retakes to cut (each one played, then accepted or rejected),
- * chapters, a title with a summary and a description, and posts to share the
- * video. Every tool is one
- * request to the user's own model, cancellable, and nothing it writes is
- * final: retakes are ordinary cuts, and every text stays editable.
+ * The AI panel, in place of the settings while it is open. Everything in it
+ * works from the transcript (the words kept, whichever voice they come from):
+ * Edit places zooms, layouts, blurs, cuts and chapters in one go, each change
+ * listed to keep or drop, with the chapters editable below; Texts writes the
+ * title, the summary, the description and the posts. Each run calls the
+ * user's own model, cancellable, and nothing it writes is final: cuts are
+ * ordinary cuts, and every text stays editable.
  */
 import { signal, useSignal } from "@preact/signals";
 import { type LlmSettings, languageName, RESPONSE_LANGUAGES } from "llm-connect";
@@ -13,17 +13,9 @@ import { useEffect } from "preact/hooks";
 import { visionProblem } from "../../ai/call";
 import { applyPlan, type EditNote, planEdit } from "../../ai/edit";
 import { llmState, loadLlmSettings, modelLabel, savedSettings } from "../../ai/settings";
-import {
-  answerLanguage,
-  findChapters,
-  findRetakes,
-  type Retake,
-  retakeCut,
-  writePosts,
-  writeTexts,
-} from "../../ai/tools";
+import { answerLanguage, writePosts, writeTexts } from "../../ai/tools";
 import { chapterList, chapterMarks, chapterTime } from "../../edit/chapters";
-import { fillerCuts, silenceCuts } from "../../edit/clean";
+import { isCut } from "../../edit/clean";
 import { clipAt, removeItem } from "../../edit/ops";
 import type { PreviewEngine } from "../../edit/preview";
 import { newId, type Project } from "../../model/project";
@@ -35,13 +27,10 @@ import { project, segments, update } from "./state";
 /** The panel is open. */
 export const aiOpen = signal(false);
 
-type Tool = "edit" | "retakes" | "chapters" | "texts" | "posts";
+type Tool = "edit" | "texts";
 const TABS: { id: Tool; label: string }[] = [
   { id: "edit", label: "Edit" },
-  { id: "retakes", label: "Retakes" },
-  { id: "chapters", label: "Chapters" },
-  { id: "texts", label: "Title" },
-  { id: "posts", label: "Posts" },
+  { id: "texts", label: "Texts" },
 ];
 
 const tab = signal<Tool>("edit");
@@ -49,10 +38,6 @@ const tab = signal<Tool>("edit");
 const language = signal("");
 const running = signal<Partial<Record<Tool, AbortController>>>({});
 const failed = signal<Partial<Record<Tool, string>>>({});
-
-/** Retakes found, for one project, and what became of each: the cut made when accepted. */
-const found = signal<{ project: string; items: Retake[] } | null>(null);
-const decided = signal<Record<string, { cut: string } | "rejected">>({});
 
 async function run<T>(
   tool: Tool,
@@ -186,10 +171,8 @@ function Edit({ p, engine, ready }: { p: Project; engine: PreviewEngine | null; 
   return (
     <>
       <p class="muted small">
-        Your model reads what you said and looks at your screen, then edits the video: zooms on what
-        you talk about, the camera or the screen alone where it fits, blurs over personal data it
-        sees, retakes, filler words and long pauses cut, chapters. Everything lands in one undo
-        step, and each change can be dropped below.
+        Your model reads the transcript and looks at your screen, then edits the video in one undo
+        step. Each change is listed below, to drop if you do not want it.
       </p>
       <div class="ai-choices">
         {EDIT_CHOICES.map((c) => (
@@ -267,156 +250,13 @@ function Edit({ p, engine, ready }: { p: Project; engine: PreviewEngine | null; 
           })}
         </ul>
       )}
+      <Chapters p={p} engine={engine} />
     </>
   );
 }
 
-function Retakes({
-  p,
-  engine,
-  ready,
-}: {
-  p: Project;
-  engine: PreviewEngine | null;
-  ready: boolean;
-}) {
-  const items = found.value?.project === p.id ? found.value.items : null;
-  const decisions = decided.value;
-  const isCut = (r: Retake) => {
-    const d = decisions[r.id];
-    return typeof d === "object" && p.cuts.some((c) => c.id === d.cut);
-  };
-  const pending = (items ?? []).filter((r) => !isCut(r) && decisions[r.id] !== "rejected");
-  const fillers = p.clips.flatMap((c) => fillerCuts(c, p.cuts));
-  const pauses = p.clips.flatMap((c) => silenceCuts(c, p.cuts));
-  const segs = segments.value;
-
-  const accept = (r: Retake) => {
-    const cut = retakeCut(r);
-    update((x) => ({ ...x, cuts: [...x.cuts, cut] }));
-    decided.value = { ...decided.value, [r.id]: { cut: cut.id } };
-  };
-  const reject = (r: Retake) => {
-    decided.value = { ...decided.value, [r.id]: "rejected" };
-  };
-  const reopen = (r: Retake) => {
-    const d = decided.value[r.id];
-    if (typeof d === "object")
-      update((x) => ({ ...x, cuts: x.cuts.filter((c) => c.id !== d.cut) }));
-    const { [r.id]: _, ...rest } = decided.value;
-    decided.value = rest;
-  };
-  const play = (r: Retake) => {
-    const at = chapterTime(segs, { clip: r.clip, t: r.start });
-    if (at === null || !engine) return;
-    engine.seek(Math.max(0, at - 0.6));
-    engine.play();
-  };
-  const cleanAll = () => {
-    const cuts = pending.map((r) => ({ r, cut: retakeCut(r) }));
-    update((x) => ({
-      ...x,
-      cuts: [...x.cuts, ...cuts.map((c) => c.cut), ...fillers, ...pauses],
-    }));
-    const next = { ...decided.value };
-    for (const { r, cut } of cuts) next[r.id] = { cut: cut.id };
-    decided.value = next;
-    toast("Cleaned up in one step: undo with ⌘Z.", "success");
-  };
-
-  return (
-    <>
-      <p class="muted small">
-        Finds the sentences you restarted or stumbled on, so only the clean attempt stays. Filler
-        words and pauses have their own buttons in the transcript.
-      </p>
-      <RunBar
-        tool="retakes"
-        label={items ? "Look again" : "Find retakes"}
-        busyLabel="Reading the transcript…"
-        disabled={!ready}
-        onRun={() =>
-          void run(
-            "retakes",
-            (s, x, signal) => findRetakes(s, x, language.value || null, signal),
-            (rs) => {
-              found.value = { project: p.id, items: rs };
-              decided.value = {};
-              if (rs.length === 0) toast("No retake found: every sentence was said once.");
-            },
-          )
-        }
-      />
-      {items && items.length > 0 && (
-        <ul class="ai-list" aria-label="Retakes">
-          {items.map((r) => {
-            const cut = isCut(r);
-            const rejected = decisions[r.id] === "rejected";
-            const take = p.clips.findIndex((c) => c.id === r.clip) + 1;
-            const at = chapterTime(segs, { clip: r.clip, t: r.start });
-            return (
-              <li
-                key={r.id}
-                class={`ai-item ai-retake${cut ? " is-cut" : ""}${rejected ? " is-rejected" : ""}`}
-              >
-                <button
-                  type="button"
-                  class="ai-time"
-                  title="Play from just before"
-                  aria-label={`Play retake at ${clock(at ?? 0)}`}
-                  onClick={() => play(r)}
-                >
-                  <Icon name="play" size={12} />
-                  {clock(at ?? 0)}
-                </button>
-                <div class="ai-item-body">
-                  <q class="ai-quote">{r.text}</q>
-                  <span class="muted small">
-                    {r.reason || "Retake"} · Take {take}
-                  </span>
-                </div>
-                <div class="ai-item-actions">
-                  {cut || rejected ? (
-                    <button type="button" class="link-btn small" onClick={() => reopen(r)}>
-                      {cut ? "Restore" : "Reconsider"}
-                    </button>
-                  ) : (
-                    <>
-                      <IconButton icon="check" label="Accept: cut it" onClick={() => accept(r)} />
-                      <IconButton icon="close" label="Reject: keep it" onClick={() => reject(r)} />
-                    </>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {(pending.length > 0 || fillers.length > 0 || pauses.length > 0) && items && (
-        <div class="ai-footer">
-          <Button size="sm" icon="wand" onClick={cleanAll}>
-            Clean everything
-          </Button>
-          <span class="muted small">
-            {pending.length} retake{pending.length === 1 ? "" : "s"}, {fillers.length} filler
-            {fillers.length === 1 ? "" : "s"}, {pauses.length} pause{pauses.length === 1 ? "" : "s"}
-            , in one undo step
-          </span>
-        </div>
-      )}
-    </>
-  );
-}
-
-function Chapters({
-  p,
-  engine,
-  ready,
-}: {
-  p: Project;
-  engine: PreviewEngine | null;
-  ready: boolean;
-}) {
+/** The chapters, found by the edit or added by hand: renamed, removed, copied for YouTube. */
+function Chapters({ p, engine }: { p: Project; engine: PreviewEngine | null }) {
   const marks = chapterMarks(p, segments.value);
   const list = chapterList(marks);
   const rename = (id: string, title: string) =>
@@ -435,24 +275,13 @@ function Chapters({
     }));
   };
   return (
-    <>
-      <p class="muted small">
-        Splits the video where a new topic starts. The chapters show on the timeline and give
-        YouTube its chapter list.
-      </p>
-      <RunBar
-        tool="chapters"
-        label={p.chapters.length ? "Find chapters again" : "Find chapters"}
-        busyLabel="Finding where each part starts…"
-        disabled={!ready}
-        onRun={() =>
-          void run(
-            "chapters",
-            (s, x, signal) => findChapters(s, x, language.value || null, signal),
-            (chapters) => update((x) => ({ ...x, chapters })),
-          )
-        }
-      />
+    <section class="ai-section" aria-label="Chapters">
+      <h3 class="field-label">Chapters</h3>
+      {marks.length === 0 && (
+        <p class="muted small">
+          None yet: the edit finds them where a new topic starts, or add one at the playhead.
+        </p>
+      )}
       {marks.length > 0 && (
         <ul class="ai-list" aria-label="Chapters">
           {marks.map(({ chapter, at }, i) => (
@@ -497,7 +326,7 @@ function Chapters({
           )}
         </div>
       )}
-    </>
+    </section>
   );
 }
 
@@ -506,21 +335,33 @@ function Texts({ p, ready }: { p: Project; ready: boolean }) {
     update((x) => ({ ...x, meta: { ...x.meta, [key]: value } }), `meta-${key}`);
   return (
     <>
-      <p class="muted small">Written from what is said in the edited video, cut words left out.</p>
+      <p class="muted small">
+        Written from the transcript of the edited video, cut words left out. [link] marks where the
+        video's link goes; the YouTube description ends with the chapters.
+      </p>
       <RunBar
         tool="texts"
-        label="Write title, summary and description"
+        label={p.meta.summary ? "Write them again" : "Write title, summary and posts"}
         busyLabel="Writing…"
         disabled={!ready}
         onRun={() =>
           void run(
             "texts",
-            (s, x, signal) => writeTexts(s, x, language.value || null, signal),
-            (t) =>
-              update((x) => ({
+            async (s, x, signal) => {
+              const t = await writeTexts(s, x, language.value || null, signal);
+              // The posts start from the new title and summary.
+              const told = {
                 ...x,
                 title: t.title || x.title,
                 meta: { ...x.meta, summary: t.summary, description: t.description },
+              };
+              return [t, await writePosts(s, told, language.value || null, signal)] as const;
+            },
+            ([t, posts]) =>
+              update((x) => ({
+                ...x,
+                title: t.title || x.title,
+                meta: { ...x.meta, summary: t.summary, description: t.description, posts },
               })),
           )
         }
@@ -558,6 +399,7 @@ function Texts({ p, ready }: { p: Project; ready: boolean }) {
           onInput={(e) => setMeta("description", e.currentTarget.value)}
         />
       </div>
+      <Posts p={p} />
     </>
   );
 }
@@ -568,26 +410,9 @@ const POSTS: { key: string; label: string; limit?: number }[] = [
   { key: "youtube", label: "YouTube description" },
 ];
 
-function Posts({ p, ready }: { p: Project; ready: boolean }) {
+function Posts({ p }: { p: Project }) {
   return (
     <>
-      <p class="muted small">
-        Posts to share the video. [link] marks where its link goes; the YouTube description ends
-        with the chapters.
-      </p>
-      <RunBar
-        tool="posts"
-        label={Object.keys(p.meta.posts).length ? "Write them again" : "Write posts"}
-        busyLabel="Writing the posts…"
-        disabled={!ready}
-        onRun={() =>
-          void run(
-            "posts",
-            (s, x, signal) => writePosts(s, x, language.value || null, signal),
-            (posts) => update((x) => ({ ...x, meta: { ...x.meta, posts } })),
-          )
-        }
-      />
       {POSTS.map(({ key, label, limit }) => {
         const text = p.meta.posts[key] ?? "";
         return (
@@ -634,7 +459,12 @@ export function AiPanel({ engine }: { engine: PreviewEngine | null }) {
   // Read so the panel follows the settings as they load or change.
   void llmState.value;
   const settings = savedSettings();
-  const transcribed = p.clips.some((c) => c.transcript?.words.length);
+  const words = p.clips.reduce(
+    (n, c) => n + (c.transcript?.words.filter((w) => !isCut(p.cuts, c.id, w)).length ?? 0),
+    0,
+  );
+  const takes = p.clips.filter((c) => c.transcript?.words.length).length;
+  const transcribed = takes > 0;
   const ready = !!settings && transcribed;
   const videoLanguage = languageName(answerLanguage(p));
 
@@ -668,9 +498,16 @@ export function AiPanel({ engine }: { engine: PreviewEngine | null }) {
           </Button>
         </div>
       )}
-      {settings && !transcribed && (
+      {transcribed ? (
+        <p class="muted small ai-source">
+          Works from the transcript: {takes} take{takes === 1 ? "" : "s"}, {words} word
+          {words === 1 ? "" : "s"} kept.
+        </p>
+      ) : (
         <div class="ai-callout">
-          <p class="small">Transcribe a take first: the tools work from what was said.</p>
+          <p class="small">
+            The AI works from the transcript: transcribe a take, or write its text, first.
+          </p>
         </div>
       )}
       <label class="ai-lang">
@@ -704,10 +541,7 @@ export function AiPanel({ engine }: { engine: PreviewEngine | null }) {
       </fieldset>
       <section class="ai-tool">
         {tab.value === "edit" && <Edit p={p} engine={engine} ready={ready} />}
-        {tab.value === "retakes" && <Retakes p={p} engine={engine} ready={ready} />}
-        {tab.value === "chapters" && <Chapters p={p} engine={engine} ready={ready} />}
         {tab.value === "texts" && <Texts p={p} ready={ready} />}
-        {tab.value === "posts" && <Posts p={p} ready={ready} />}
       </section>
       {settingsOpen.value && <ModelSettingsModal onClose={() => (settingsOpen.value = false)} />}
     </aside>

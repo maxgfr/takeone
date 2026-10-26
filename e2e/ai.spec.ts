@@ -39,6 +39,8 @@ const ANSWERS: Record<string, unknown> = {
     layouts: [],
     blurs: [{ frame: "F1", region: { x: 0.1, y: 0.8, w: 0.3, h: 0.05 }, why: "an email address" }],
   },
+  texts: { title: "The dashboard", summary: "A tour.", description: "How to add people." },
+  posts: { linkedin: "New video [link]", x: "Watch [link]", youtube: "A tour." },
   chapters: {
     chapters: [
       { take: 1, word: 4, title: "Intro" },
@@ -144,6 +146,7 @@ async function transcribedTake(
   await page.waitForTimeout(3400);
   await page.getByRole("button", { name: /Stop/ }).first().click();
   await expect(page.getByLabel("Title")).toHaveValue(name, { timeout: 20_000 });
+  await page.locator(".tr-settings summary").click();
   await page.getByRole("button", { name: "AI settings" }).click();
   await page.getByLabel("Provider").selectOption("openai");
   await page.getByLabel("API key").fill("sk-test");
@@ -154,7 +157,7 @@ async function transcribedTake(
   return { asked, images };
 }
 
-test("the AI cuts a retake and finds chapters; captions show on the preview", async ({
+test("the AI cuts a retake and finds chapters, then writes the texts; captions show", async ({
   page,
   context,
 }) => {
@@ -163,28 +166,49 @@ test("the AI cuts a retake and finds chapters; captions show on the preview", as
   page.on("pageerror", (e) => errors.push(e.message));
   const { asked } = await transcribedTake(page, "AI take");
 
-  // Retakes: found, played, accepted as a cut
+  // The edit, from the transcript alone: the retake cut, the chapters found
   await page.getByRole("button", { name: "AI", exact: true }).click();
   const panel = page.getByRole("complementary", { name: "AI" });
   await expect(panel.getByText(/OpenAI/)).toBeVisible();
-  await panel.getByRole("button", { name: "Retakes", exact: true }).click();
-  await panel.getByRole("button", { name: "Find retakes" }).click();
-  const retake = panel.getByRole("listitem").filter({ hasText: "So this is the—" });
-  await expect(retake).toBeVisible();
-  await expect(retake).toContainText("restarted sentence");
-  await retake.getByRole("button", { name: "Accept: cut it" }).click();
+  await expect(panel.getByText(/Works from the transcript: 1 take, 13 words/)).toBeVisible();
+  await panel.getByLabel("Zooms, layouts and blurs").uncheck();
+  await panel.getByLabel("Cut filler words and long pauses").uncheck();
+  await panel.getByRole("button", { name: "Edit the video" }).click();
+  const retake = panel.getByRole("listitem").filter({ hasText: "Cut “So this is the—”" });
+  await expect(retake).toContainText("restarted sentence", { timeout: 20_000 });
   await expect(page.locator(".w.is-cut")).toHaveCount(4);
-  await expect(retake.getByRole("button", { name: "Restore" })).toBeVisible();
 
   // Chapters: on the timeline, and listed for YouTube
-  await panel.getByRole("button", { name: "Chapters", exact: true }).click();
-  await panel.getByRole("button", { name: "Find chapters" }).click();
   await expect(page.locator(".tl-chapter")).toHaveText(["Intro"]);
   await expect(panel.locator(".ai-pre")).toHaveText("0:00 Intro");
   await panel.getByLabel("Title of chapter 1").fill("Welcome");
   await expect(page.locator(".tl-chapter")).toHaveText(["Welcome"]);
-  expect(asked).toEqual(["retakes", "chapters"]);
+  expect([...asked].sort()).toEqual(["chapters", "retakes"]);
+
+  // Dropping the retake brings its words back
+  await retake.getByRole("button", { name: /^Drop/ }).click();
+  await expect(page.locator(".w.is-cut")).toHaveCount(0);
+
+  // Texts: the title, the summary, then the posts written from them
+  await panel.getByRole("button", { name: "Texts", exact: true }).click();
+  await panel.getByRole("button", { name: "Write title, summary and posts" }).click();
+  await expect(panel.getByLabel("Summary")).toHaveValue("A tour.");
+  await expect(panel.getByLabel("LinkedIn")).toHaveValue("New video [link]");
+  await expect(page.getByLabel("Title").first()).toHaveValue("The dashboard");
+  expect(asked.slice(2)).toEqual(["texts", "posts"]);
   await panel.getByRole("button", { name: "Close the AI panel" }).click();
+  await page.locator(".w", { hasText: "the—" }).evaluate((first) => {
+    // Cut the retake again by its words, for the captions below.
+    const last = first.previousElementSibling?.previousElementSibling?.previousElementSibling;
+    const range = document.createRange();
+    range.setStart((last ?? first).firstChild as Node, 0);
+    range.setEnd(first.firstChild as Node, 1);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  });
+  await page.keyboard.press("Delete");
+  await expect(page.locator(".w.is-cut")).toHaveCount(4);
 
   // Captions: their dark band shows at the bottom of the preview while a sentence is said.
   // One second in (the retake is cut), "so this is the dashboard." is being said.

@@ -268,6 +268,9 @@ export class RecordingSession {
       activity: this.activity.events,
       poster: (await this.poster) ?? null,
       transcript: null,
+      takeTranscript: null,
+      voice: "take",
+      voiceover: null,
     };
   }
 

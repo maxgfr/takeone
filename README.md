@@ -17,19 +17,26 @@ from recording to the 4K export, happens in your browser.
    takes as you want.
 2. **Edit by text.** Each take is transcribed, timed to the word, on this device by NVIDIA
    Parakeet (25 European languages, fillers kept, downloaded once), NVIDIA Canary (lighter) or
-   Whisper (other languages), or by your AI provider (OpenAI, Gemini, Mistral, Groq). Select words and press Delete to cut them; click a struck-out word to bring it
-   back. Filler words (in 14 languages) and long pauses go in one click each.
-3. **Make it look finished.** Layouts per part (screen with a camera bubble, screen only, camera
+   Whisper (other languages), or by your AI provider (OpenAI, Gemini, Mistral, Groq), or you type
+   it. Select words and press Delete to cut them; click a struck-out word to bring it back;
+   double-click one to correct it. Filler words (in 14 languages) and long pauses go in one click
+   each.
+3. **Your voice, now or later.** Speak while you record, or only for the transcript and mute the
+   take afterwards. Then record a voice-over over the edited video, from the playhead, with your
+   text highlighted as a prompter: it is transcribed in turn, and its text becomes the one you edit.
+   It belongs to the takes, so a cut made afterwards cuts it too; switch any take back to its own
+   voice and its own text whenever you like.
+4. **Make it look finished.** Layouts per part (screen with a camera bubble, screen only, camera
    only, side by side) that slide from one to the next; zooms placed where you clicked, editable;
    blurred regions over time; backgrounds, padding, rounded corners, shadows; 16:9, 9:16, 1:1 or
    4:3; captions with the word being said lit up, in other languages too.
-4. **Let AI edit, if you want.** With your own key, one button: the model reads what you said
+5. **Let AI edit, if you want.** With your own key, one button: the model reads the transcript
    and looks at stills of your screen, then places zooms on what you talk about, switches to the
    camera or the screen alone where it fits, blurs personal data it sees (emails, keys, phone
    numbers), cuts retakes, filler words and long pauses, and adds chapters, all in one undo step
    with each change listed to drop. It also writes the title, summary and description, posts for
    LinkedIn and X, and translates the captions.
-5. **Share.** Export MP4 (H.264, up to 4K at 60 fps), WebM, GIF, the sound alone, the transcript,
+6. **Share.** Export MP4 (H.264, up to 4K at 60 fps), WebM, GIF, the sound alone, the transcript,
    SRT/VTT captions, or one HTML file that plays offline with chapters, captions and a searchable
    transcript. Or send a **live link**: the video streams from your tab, peer to peer, and you see
    who is watching, how far they got and their reactions.

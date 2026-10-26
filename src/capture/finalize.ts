@@ -31,17 +31,20 @@ async function remux(projectId: string, media: Media): Promise<Media> {
   return { ...media, key, type, duration: Number.isFinite(duration) ? duration : media.duration };
 }
 
-/** Each of the clip's files made seekable; a file that cannot be remuxed is kept as it is. */
+/** A file made seekable; one that cannot be remuxed is kept as it is. */
+export async function finalizeMedia(projectId: string, m: Media): Promise<Media> {
+  if (!m.type.includes("webm")) return m;
+  try {
+    return await remux(projectId, m);
+  } catch (err) {
+    console.warn("takeone: could not remux", m.key, err);
+    return m;
+  }
+}
+
+/** Each of the clip's files made seekable. */
 export async function finalizeClip(projectId: string, clip: Clip): Promise<Clip> {
-  const fix = async (m: Media | null) => {
-    if (!m?.type.includes("webm")) return m;
-    try {
-      return await remux(projectId, m);
-    } catch (err) {
-      console.warn("takeone: could not remux", m.key, err);
-      return m;
-    }
-  };
+  const fix = async (m: Media | null) => (m ? finalizeMedia(projectId, m) : m);
   const [screen, camera, mic] = await Promise.all([
     fix(clip.screen),
     fix(clip.camera),
