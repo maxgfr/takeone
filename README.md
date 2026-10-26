@@ -30,12 +30,15 @@ from recording to the 4K export, happens in your browser.
    only, side by side) that slide from one to the next; zooms placed where you clicked, editable;
    blurred regions over time; backgrounds, padding, rounded corners, shadows; 16:9, 9:16, 1:1 or
    4:3; captions with the word being said lit up, in other languages too.
-5. **Let AI edit, if you want.** With your own key, one button: the model reads the transcript
-   and looks at stills of your screen, then places zooms on what you talk about, switches to the
-   camera or the screen alone where it fits, blurs personal data it sees (emails, keys, phone
-   numbers), cuts retakes, filler words and long pauses, and adds chapters, all in one undo step
-   with each change listed to drop. It also writes the title, summary and description, posts for
-   LinkedIn and X, and translates the captions.
+5. **Tell the AI what you want, if you want.** With your own key, say it in plain words, in any
+   language: "cut the intro", "make it 45 seconds", "zoom when I click Save", "bring back the
+   sentence about pricing", "blur the emails". The model reads the whole transcript (cut words
+   too, so it can bring them back) and looks at stills of your screen, then cuts, restores,
+   zooms, changes layouts, blurs, adds chapters or corrects the words the speech recognition got
+   wrong. Each answer is one undo step, with its changes listed to drop one by one and the length
+   before and after; ask again to refine it. One click does the common ones: the full edit,
+   fixing the transcript, tightening, a 30-second version, zooms, chapters. It also writes the
+   title, summary and description, posts for LinkedIn and X, and translates the captions.
 6. **Share.** Export MP4 (H.264, up to 4K at 60 fps), WebM, GIF, the sound alone, the transcript,
    SRT/VTT captions, or one HTML file that plays offline with chapters, captions and a searchable
    transcript. Or send a **live link**: the video streams from your tab, peer to peer, and you see

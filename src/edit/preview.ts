@@ -2,9 +2,12 @@
  * The preview: plays the edit on a canvas. Each take's files play in hidden
  * media elements (the screen with its sound, the camera, the voice heard:
  * the microphone's file or a voice-over's),
- * kept in step with one clock on the output's timeline; a cut makes the
- * source time jump, so the elements are sent to the new time. Every frame,
- * the compositor draws what the elements show.
+ * kept in step with one clock on the output's timeline. A cut makes the
+ * source time jump: sending a playing element to the new time stalls it and
+ * shows nothing for a moment, so each file has a spare element, sent ahead to
+ * where the next piece starts, that takes over at the cut. Every frame, the
+ * compositor draws what the elements show; while one is still seeking, the
+ * last frame stays up rather than an empty one.
  */
 import { signal } from "@preact/signals";
 import type { Clip, Media, Project } from "../model/project";
@@ -24,12 +27,16 @@ import { pieceAt, voiceParts } from "./voiceover";
 type MediaUrl = (key: string, type: string) => Promise<string>;
 
 interface Elements {
-  screen: HTMLVideoElement | null;
-  camera: HTMLVideoElement | null;
+  screen: Deck<HTMLVideoElement> | null;
+  camera: Deck<HTMLVideoElement> | null;
 }
 
 /** Elements further than this from where they should be are sent there. */
 const DRIFT = 0.3;
+/** How long before a cut the spare elements are sent to the other side of it. */
+const LOOKAHEAD = 1.5;
+/** How long the last frame may stay up while an element seeks. */
+const HOLD = 400;
 
 function element<T extends HTMLMediaElement>(make: () => T, url: string, muted: boolean): T {
   const el = make();
@@ -40,6 +47,82 @@ function element<T extends HTMLMediaElement>(make: () => T, url: string, muted: 
   return el;
 }
 
+/**
+ * One file in two elements: the live one plays, the spare (made on first use) waits where the
+ * next piece starts and takes over there, already decoded, instead of the live one seeking.
+ */
+class Deck<T extends HTMLMediaElement> {
+  live: T;
+  private spare: T | null = null;
+  private cued: number | null = null;
+  private volume = 1;
+
+  constructor(
+    private readonly make: () => T,
+    private readonly url: string,
+    private readonly muted: boolean,
+    private readonly onFrame: () => void,
+  ) {
+    this.live = this.element();
+  }
+
+  private element(): T {
+    const el = element(this.make, this.url, this.muted);
+    el.volume = this.volume;
+    el.addEventListener("seeked", this.onFrame);
+    el.addEventListener("loadeddata", this.onFrame);
+    return el;
+  }
+
+  get elements(): T[] {
+    return this.spare ? [this.live, this.spare] : [this.live];
+  }
+
+  /** The live element shows the frame it should (not seeking, data loaded). */
+  get ready(): boolean {
+    return this.live.readyState >= 2 && !this.live.seeking;
+  }
+
+  setVolume(v: number): void {
+    this.volume = v;
+    for (const el of this.elements) el.volume = v;
+  }
+
+  /** Sends the spare to `t` seconds of the file, to take over there. */
+  cue(t: number): void {
+    if (t < 0 || (this.cued !== null && Math.abs(this.cued - t) < 0.01)) return;
+    this.spare ??= this.element();
+    this.cued = t;
+    this.spare.currentTime = t;
+  }
+
+  /** Keeps the deck at `t` seconds of its file, playing or not; `jump` when the time jumped. */
+  follow(t: number, playing: boolean, jump: boolean): void {
+    if (t < 0) {
+      this.pause();
+      return;
+    }
+    const off = Math.abs(this.live.currentTime - t);
+    if (off > (jump ? 0.04 : DRIFT)) {
+      const s = this.spare;
+      // The spare waits at the start of this piece: a frame or two behind the clock at most.
+      const there = this.cued !== null && Math.abs(this.cued - t) < 0.25;
+      if (s && there && s.readyState >= 2 && !s.seeking) {
+        this.spare = this.live;
+        this.live = s;
+        this.cued = null;
+        this.spare.pause();
+      } else this.live.currentTime = t;
+    }
+    if (playing && this.live.paused) void this.live.play().catch(() => undefined);
+    if (!playing && !this.live.paused) this.live.pause();
+  }
+
+  pause(): void {
+    for (const el of this.elements) if (!el.paused) el.pause();
+  }
+}
+
 export class PreviewEngine {
   readonly time = signal(0);
   readonly playing = signal(false);
@@ -48,7 +131,12 @@ export class PreviewEngine {
   private duration = 0;
   private readonly elements = new Map<string, Elements>();
   /** The voices' files, by key: a voice-over's file plays in several takes. */
-  private readonly voices = new Map<string, HTMLAudioElement | null>();
+  private readonly voices = new Map<string, Deck<HTMLAudioElement> | null>();
+  /** The piece of the output playing at the last sync: when it changes, the time jumped. */
+  private piece = -1;
+  /** The take the canvas last showed, and since when it has waited on a seeking element. */
+  private shown: string | null = null;
+  private holdSince = 0;
   /** No voice is heard (while a voice-over is being recorded over the video). */
   voicesMuted = false;
   private raf = 0;
@@ -92,16 +180,9 @@ export class PreviewEngine {
     const redraw = () => {
       if (!this.playing.value) this.draw();
     };
-    if (clip.screen) {
-      els.screen = element(() => document.createElement("video"), await url(clip.screen), false);
-      els.screen.addEventListener("seeked", redraw);
-      els.screen.addEventListener("loadeddata", redraw);
-    }
-    if (clip.camera) {
-      els.camera = element(() => document.createElement("video"), await url(clip.camera), true);
-      els.camera.addEventListener("seeked", redraw);
-      els.camera.addEventListener("loadeddata", redraw);
-    }
+    const video = () => document.createElement("video");
+    if (clip.screen) els.screen = new Deck(video, await url(clip.screen), false, redraw);
+    if (clip.camera) els.camera = new Deck(video, await url(clip.camera), true, redraw);
     this.syncTo(this.time.value, !this.playing.value);
     return els;
   }
@@ -118,25 +199,30 @@ export class PreviewEngine {
   pause(): void {
     if (!this.playing.value) return;
     this.playing.value = false;
-    for (const el of this.all()) el.pause();
+    for (const d of this.decks()) d.pause();
     this.syncTo(this.time.value, true);
   }
 
-  private *all(): Iterable<HTMLMediaElement> {
+  private *decks(): Iterable<Deck<HTMLMediaElement>> {
     for (const els of this.elements.values())
-      for (const el of [els.screen, els.camera]) if (el) yield el;
-    for (const el of this.voices.values()) if (el) yield el;
+      for (const d of [els.screen, els.camera]) if (d) yield d;
+    for (const d of this.voices.values()) if (d) yield d;
   }
 
-  /** The element playing a voice's file, once it is loaded (it starts loading on first ask). */
-  private voice(key: string, type: string): HTMLAudioElement | null {
+  /** The deck playing a voice's file, once it is loaded (it starts loading on first ask). */
+  private voice(key: string, type: string): Deck<HTMLAudioElement> | null {
     if (this.voices.has(key)) return this.voices.get(key) ?? null;
     this.voices.set(key, null);
     void this.mediaUrl(key, type).then((u) => {
       if (this.disposed || !u) return;
       this.voices.set(
         key,
-        element(() => document.createElement("audio"), u, false),
+        new Deck(
+          () => document.createElement("audio"),
+          u,
+          false,
+          () => {},
+        ),
       );
       this.syncTo(this.time.value, !this.playing.value);
     });
@@ -166,36 +252,36 @@ export class PreviewEngine {
     if (this.current !== clip.id) {
       // Another take: silence the one before.
       const before = this.current ? this.elements.get(this.current) : undefined;
-      for (const el of [before?.screen, before?.camera]) el?.pause();
+      for (const d of [before?.screen, before?.camera]) d?.pause();
       this.current = clip.id;
     }
+    // Into another piece: even a short cut (a filler word) is a jump, not a drift.
+    const jump = force || at.index !== this.piece;
+    this.piece = at.index;
     if (!els) return;
-    const volume = p.style.audio.screenVolume;
-    const pairs: [HTMLMediaElement | null, Media | null][] = [
-      [els.screen, clip.screen],
-      [els.camera, clip.camera],
-    ];
-    for (const [el, m] of pairs) {
-      if (!el || !m) continue;
-      if (el === els.screen) el.volume = Math.max(0, Math.min(1, volume));
-      this.follow(el, at.t - m.offset, force);
-    }
+    const playing = this.playing.value;
+    els.screen?.setVolume(Math.max(0, Math.min(1, p.style.audio.screenVolume)));
+    if (els.screen && clip.screen) els.screen.follow(at.t - clip.screen.offset, playing, jump);
+    if (els.camera && clip.camera) els.camera.follow(at.t - clip.camera.offset, playing, jump);
     // The voice: the piece of a file heard now, every other voice file silent.
     const piece = this.voicesMuted ? undefined : pieceAt(voiceParts(clip), at.t);
     const heard = piece ? this.voice(piece.key, piece.type) : null;
-    for (const el of this.voices.values()) if (el && el !== heard && !el.paused) el.pause();
-    if (heard && piece) this.follow(heard, piece.at + (at.t - piece.start), force);
+    for (const d of this.voices.values()) if (d && d !== heard) d.pause();
+    if (heard && piece) heard.follow(piece.at + (at.t - piece.start), playing, jump);
+    if (playing) this.cueNext(at.index, t);
   }
 
-  /** Keeps an element at `target` seconds of its file, playing or not like the preview. */
-  private follow(el: HTMLMediaElement, target: number, force: boolean): void {
-    if (target < 0) {
-      el.pause();
-      return;
-    }
-    if (force || Math.abs(el.currentTime - target) > DRIFT) el.currentTime = target;
-    if (this.playing.value && el.paused) void el.play().catch(() => undefined);
-    if (!this.playing.value && !el.paused) el.pause();
+  /** Close to the end of a piece, the spares go to where the next one starts. */
+  private cueNext(index: number, t: number): void {
+    const next = this.segments[index + 1];
+    if (!next || next.at - t > LOOKAHEAD) return;
+    const c = next.clip;
+    const els = this.elements.get(c.id);
+    if (els?.screen && c.screen) els.screen.cue(next.start - c.screen.offset);
+    if (els?.camera && c.camera) els.camera.cue(next.start - c.camera.offset);
+    const piece = this.voicesMuted ? undefined : pieceAt(voiceParts(c), next.start);
+    const deck = piece ? this.voices.get(piece.key) : null;
+    if (deck && piece) deck.cue(piece.at + (next.start - piece.start));
   }
 
   private loop(now: number): void {
@@ -230,10 +316,20 @@ export class PreviewEngine {
     }
     const clip = at.segment.clip;
     const els = this.elements.get(clip.id);
-    const source = (el: HTMLVideoElement | null | undefined): Source | null =>
-      el && el.readyState >= 2 && el.videoWidth
+    // An element still seeking would draw nothing: the last frame stays up a moment instead.
+    const waiting = [els?.screen, els?.camera].some((d) => d && !d.ready);
+    if (waiting) {
+      const now = performance.now();
+      this.holdSince ||= now;
+      if (this.shown === clip.id && now - this.holdSince < HOLD) return;
+    } else this.holdSince = 0;
+    this.shown = clip.id;
+    const source = (d: Deck<HTMLVideoElement> | null | undefined): Source | null => {
+      const el = d?.live;
+      return el && el.readyState >= 2 && el.videoWidth
         ? { src: el, w: el.videoWidth, h: el.videoHeight }
         : null;
+    };
     const screen = source(els?.screen);
     const camera = source(els?.camera);
     const aspect = screen
@@ -264,11 +360,12 @@ export class PreviewEngine {
   dispose(): void {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
-    for (const el of this.all()) {
-      el.pause();
-      el.removeAttribute("src");
-      el.load();
-    }
+    for (const d of this.decks())
+      for (const el of d.elements) {
+        el.pause();
+        el.removeAttribute("src");
+        el.load();
+      }
     this.elements.clear();
     this.voices.clear();
   }

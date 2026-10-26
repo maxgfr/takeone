@@ -124,7 +124,7 @@ const rangeSchema = z.object({
   end: z.number(),
 });
 
-export const CUT_REASONS = ["manual", "text", "filler", "silence", "retake", "trim"] as const;
+export const CUT_REASONS = ["manual", "text", "filler", "silence", "retake", "trim", "ai"] as const;
 export const cutSchema = rangeSchema.extend({ reason: z.enum(CUT_REASONS).default("manual") });
 export type Cut = z.infer<typeof cutSchema>;
 

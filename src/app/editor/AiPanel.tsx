@@ -1,15 +1,17 @@
 /**
  * The AI panel, in place of the settings while it is open. Everything in it
- * works from the transcript (the words kept, whichever voice they come from):
- * Edit places zooms, layouts, blurs, cuts and chapters in one go, each change
- * listed to keep or drop, with the chapters editable below; Texts writes the
- * title, the summary, the description and the posts. Each run calls the
- * user's own model, cancellable, and nothing it writes is final: cuts are
- * ordinary cuts, and every text stays editable.
+ * works from the transcript (the words kept, whichever voice they come from).
+ * Edit is a conversation: say what you want in plain words, or pick a quick
+ * request (the full automatic edit, fixing the transcript, a shorter version,
+ * zooms, chapters); each answer lands in one undo step, its changes listed to
+ * go to or drop, with the length before and after. The chapters stay editable
+ * below. Texts writes the title, the summary, the description and the posts.
+ * Every request calls the user's own model and can be cancelled.
  */
 import { signal, useSignal } from "@preact/signals";
 import { type LlmSettings, languageName, RESPONSE_LANGUAGES } from "llm-connect";
 import { useEffect } from "preact/hooks";
+import { applyAsk, askEdit } from "../../ai/ask";
 import { visionProblem } from "../../ai/call";
 import { applyPlan, type EditNote, planEdit } from "../../ai/edit";
 import { llmState, loadLlmSettings, modelLabel, savedSettings } from "../../ai/settings";
@@ -18,11 +20,17 @@ import { chapterList, chapterMarks, chapterTime } from "../../edit/chapters";
 import { isCut } from "../../edit/clean";
 import { clipAt, removeItem } from "../../edit/ops";
 import type { PreviewEngine } from "../../edit/preview";
-import { newId, type Project } from "../../model/project";
+import {
+  type ClipTranscript,
+  newId,
+  type Project,
+  shownOf,
+  withTranscript,
+} from "../../model/project";
 import { ModelSettingsModal } from "../ModelSettings";
 import { clock } from "../Record";
 import { Button, copyText, errorText, Field, Icon, IconButton, toast } from "../ui";
-import { project, segments, update } from "./state";
+import { duration, project, segments, update, updateClip } from "./state";
 
 /** The panel is open. */
 export const aiOpen = signal(false);
@@ -122,20 +130,55 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
   );
 }
 
-/** What the AI edit may change. */
-const editWhat = signal({ visual: true, retakes: true, clean: true, chapters: true });
-const editStep = signal("");
-/** The last AI edit of a project: what it changed, to review. */
-const edited = signal<{ project: string; notes: EditNote[] } | null>(null);
+/** One request and what came of it. */
+interface Turn {
+  id: string;
+  request: string;
+  reply: string;
+  notes: EditNote[];
+  /** For each word correction listed: the take, its text before and after. */
+  fixes: Record<string, { clip: string; before: ClipTranscript; after: ClipTranscript }>;
+  /** The edited video's length before and after. */
+  from: number;
+  to: number;
+}
 
-const EDIT_CHOICES: { key: keyof typeof editWhat.value; label: string }[] = [
-  { key: "visual", label: "Zooms, layouts and blurs" },
-  { key: "retakes", label: "Cut the retakes" },
-  { key: "clean", label: "Cut filler words and long pauses" },
-  { key: "chapters", label: "Chapters" },
+/** The conversation, for one project. */
+const turns = signal<{ project: string; items: Turn[] } | null>(null);
+const draft = signal("");
+/** Show the model the screen (for zooms and blurs). */
+const see = signal(true);
+const step = signal("");
+
+/** One click for what people ask most; `full` is the whole automatic edit. */
+const QUICK: { label: string; request: string; see?: boolean; full?: boolean }[] = [
+  { label: "Full edit", request: "Edit the whole video", full: true },
+  {
+    label: "Fix the transcript",
+    request: "Fix the words the speech recognition got wrong. Change nothing else.",
+    see: false,
+  },
+  {
+    label: "Tighten",
+    request:
+      "Tighten the video: cut the failed attempts, the repetitions, the hesitations and the digressions. Keep everything that carries meaning.",
+    see: false,
+  },
+  {
+    label: "30-second version",
+    request:
+      "Make the video about 30 seconds long: keep the strongest part that makes sense on its own, cut the rest.",
+    see: false,
+  },
+  {
+    label: "Zoom on what I show",
+    request: "Zoom on what I talk about or click, where seeing it closer helps.",
+    see: true,
+  },
+  { label: "Chapters", request: "Split the video into chapters.", see: false },
 ];
 
-function stillThere(p: Project, n: EditNote): boolean {
+function stillThere(p: Project, n: EditNote, turn: Turn): boolean {
   switch (n.kind) {
     case "zoom":
       return p.zooms.some((z) => z.id === n.id);
@@ -147,19 +190,91 @@ function stillThere(p: Project, n: EditNote): boolean {
       return !n.id || p.cuts.some((c) => c.id === n.id);
     case "chapter":
       return p.chapters.some((c) => c.id === n.id);
+    case "fix": {
+      const f = turn.fixes[n.id];
+      return !!f && p.clips.find((c) => c.id === f.clip)?.transcript === f.after;
+    }
   }
 }
 
-function Edit({ p, engine, ready }: { p: Project; engine: PreviewEngine | null; ready: boolean }) {
-  const settings = savedSettings();
-  const blind = settings ? visionProblem(settings) : null;
-  const what = editWhat.value;
-  const notes = edited.value?.project === p.id ? edited.value.notes : null;
-  const segs = segments.value;
-  const kept = (notes ?? []).filter((n) => stillThere(p, n));
+function addTurn(p: Project, turn: Omit<Turn, "id">) {
+  const mine = turns.value?.project === p.id ? turns.value.items : [];
+  turns.value = { project: p.id, items: [...mine, { ...turn, id: newId("t") }] };
+}
 
+/** Sends a request (or runs the full edit) and applies what comes back, in one undo step. */
+function ask(p: Project, request: string, opts: { see: boolean; full?: boolean }) {
+  const text = request.trim();
+  if (!text) return;
+  const history = (turns.value?.project === p.id ? turns.value.items : []).map((t) => ({
+    request: t.request,
+    reply: t.reply,
+  }));
+  const from = duration.peek();
+  const progress = (m: string) => (step.value = m);
+  if (opts.full) {
+    void run(
+      "edit",
+      (s, x, signal) =>
+        planEdit(s, x, {
+          visual: true,
+          retakes: true,
+          clean: true,
+          chapters: true,
+          language: null,
+          signal,
+          onProgress: progress,
+        }),
+      (plan) => {
+        step.value = "";
+        update((x) => applyPlan(x, plan, true));
+        addTurn(p, {
+          request: text,
+          reply: plan.notes.length
+            ? "Zooms, layouts, blurs, retakes, filler words, pauses and chapters, in one step."
+            : "Nothing to change.",
+          notes: plan.notes,
+          fixes: {},
+          from,
+          to: duration.peek(),
+        });
+      },
+    );
+    return;
+  }
+  void run(
+    "edit",
+    (s, x, signal) => askEdit(s, x, text, { history, see: opts.see, signal, onProgress: progress }),
+    (plan) => {
+      step.value = "";
+      update((x) => applyAsk(x, plan));
+      const fixes: Turn["fixes"] = {};
+      for (const f of plan.fixes) {
+        updateClip(f.clip, (c) => withTranscript(c, shownOf(c), f.after));
+        fixes[`fix-${f.clip}`] = f;
+      }
+      addTurn(p, {
+        request: text,
+        reply: plan.reply || (plan.notes.length ? "Done." : "Nothing to change."),
+        notes: plan.notes,
+        fixes,
+        from,
+        to: duration.peek(),
+      });
+      draft.value = "";
+    },
+  );
+}
+
+function Changes({ p, turn, engine }: { p: Project; turn: Turn; engine: PreviewEngine | null }) {
+  const segs = segments.value;
+  const kept = turn.notes.filter((n) => stillThere(p, n, turn));
+  if (!kept.length) return null;
   const drop = (n: EditNote) => {
-    if (n.kind === "chapter")
+    if (n.kind === "fix") {
+      const f = turn.fixes[n.id];
+      if (f) updateClip(f.clip, (c) => withTranscript(c, shownOf(c), f.before));
+    } else if (n.kind === "chapter")
       update((x) => ({ ...x, chapters: x.chapters.filter((c) => c.id !== n.id) }));
     else if (n.id) update((x) => removeItem(x, n.kind as "zoom" | "layout" | "blur" | "cut", n.id));
   };
@@ -167,88 +282,148 @@ function Edit({ p, engine, ready }: { p: Project; engine: PreviewEngine | null; 
     const at = chapterTime(segs, { clip: n.clip, t: n.t });
     if (at !== null) engine?.seek(Math.max(0, at - 0.3));
   };
+  return (
+    <ul class="ai-list" aria-label="Changes">
+      {kept.map((n, i) => {
+        const at = chapterTime(segs, { clip: n.clip, t: n.t });
+        return (
+          <li key={n.id || `${n.what}-${i}`} class="ai-item ai-change">
+            <button
+              type="button"
+              class="ai-time"
+              title="Go there"
+              aria-label={`Go to ${clock(at ?? 0)}`}
+              onClick={() => go(n)}
+            >
+              {clock(at ?? 0)}
+            </button>
+            <div class="ai-item-body">
+              <span>{n.what}</span>
+              {n.why && <span class="muted small">{n.why}</span>}
+            </div>
+            {n.id && (
+              <div class="ai-item-actions">
+                <IconButton icon="close" label={`Drop: ${n.what}`} onClick={() => drop(n)} />
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function Edit({ p, engine, ready }: { p: Project; engine: PreviewEngine | null; ready: boolean }) {
+  const settings = savedSettings();
+  const blind = settings ? visionProblem(settings) : null;
+  const items = turns.value?.project === p.id ? turns.value.items : [];
+  const busy = !!running.value.edit;
+  const error = failed.value.edit;
+  const send = () => ask(p, draft.value, { see: see.value });
 
   return (
     <>
-      <p class="muted small">
-        Your model reads the transcript and looks at your screen, then edits the video in one undo
-        step. Each change is listed below, to drop if you do not want it.
-      </p>
-      <div class="ai-choices">
-        {EDIT_CHOICES.map((c) => (
-          <label key={c.key} class="check">
+      <form
+        class="ai-ask"
+        onSubmit={(e) => {
+          e.preventDefault();
+          send();
+        }}
+      >
+        <textarea
+          class="input ai-prompt"
+          aria-label="Ask the AI"
+          rows={3}
+          placeholder="Tell it what to do: “cut the intro”, “make it 45 seconds”, “zoom when I click Save”, “bring back the sentence about pricing”…"
+          value={draft.value}
+          disabled={!ready}
+          onInput={(e) => (draft.value = e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+              e.preventDefault();
+              if (!busy) send();
+            }
+          }}
+        />
+        <div class="ai-ask-bar">
+          <label class="check small" title={blind ?? undefined}>
             <input
               type="checkbox"
-              checked={what[c.key]}
-              onChange={(e) => (editWhat.value = { ...what, [c.key]: e.currentTarget.checked })}
+              checked={see.value && !blind}
+              disabled={!!blind}
+              onChange={(e) => (see.value = e.currentTarget.checked)}
             />
-            {c.label}
+            Show it the screen
           </label>
+          {busy ? (
+            <Button size="sm" variant="ghost" onClick={() => cancel("edit")}>
+              Cancel
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              size="sm"
+              icon="sparkles"
+              class="btn-ai"
+              disabled={!ready || !draft.value.trim()}
+            >
+              Send
+            </Button>
+          )}
+        </div>
+      </form>
+      <fieldset class="ai-quick" aria-label="Quick requests">
+        {QUICK.map((q) => (
+          <button
+            key={q.label}
+            type="button"
+            class="ai-chip"
+            disabled={!ready || busy}
+            title={
+              q.full
+                ? "Zooms, layouts, blurs, retakes, filler words, pauses and chapters"
+                : q.request
+            }
+            onClick={() =>
+              ask(p, q.full ? q.label : q.request, { see: q.see ?? see.value, full: !!q.full })
+            }
+          >
+            {q.label}
+          </button>
         ))}
-      </div>
-      {what.visual && blind && (
-        <p class="field-hint">
-          This model does not see images: zooms follow the changes noted while recording, and
-          nothing is blurred.
+      </fieldset>
+      {busy && (
+        <div class="ai-busy" role="status">
+          <span class="spinner spinner-sm" aria-hidden="true" />
+          <span>{step.value || "Thinking…"}</span>
+        </div>
+      )}
+      {error && (
+        <p class="error small" role="alert">
+          {error}
         </p>
       )}
-      <RunBar
-        tool="edit"
-        label={notes ? "Edit again" : "Edit the video"}
-        busyLabel={editStep.value || "Reading the transcript…"}
-        disabled={!ready || !Object.values(what).some(Boolean)}
-        onRun={() =>
-          void run(
-            "edit",
-            (s, x, signal) =>
-              planEdit(s, x, {
-                ...what,
-                language: language.value || null,
-                signal,
-                onProgress: (m) => (editStep.value = m),
-              }),
-            (plan) => {
-              editStep.value = "";
-              update((x) => applyPlan(x, plan, what.visual));
-              edited.value = { project: p.id, notes: plan.notes };
-              toast(
-                plan.notes.length
-                  ? "Edited in one step: undo with ⌘Z, or drop a change below."
-                  : "The model found nothing to change.",
-                "success",
-              );
-            },
-          )
-        }
-      />
-      {kept.length > 0 && (
-        <ul class="ai-list" aria-label="Changes">
-          {kept.map((n, i) => {
-            const at = chapterTime(segs, { clip: n.clip, t: n.t });
-            return (
-              <li key={n.id || `${n.what}-${i}`} class="ai-item ai-change">
-                <button
-                  type="button"
-                  class="ai-time"
-                  title="Go there"
-                  aria-label={`Go to ${clock(at ?? 0)}`}
-                  onClick={() => go(n)}
-                >
-                  {clock(at ?? 0)}
-                </button>
-                <div class="ai-item-body">
-                  <span>{n.what}</span>
-                  {n.why && <span class="muted small">{n.why}</span>}
-                </div>
-                {n.id && (
-                  <div class="ai-item-actions">
-                    <IconButton icon="close" label={`Drop: ${n.what}`} onClick={() => drop(n)} />
-                  </div>
+      {items.length > 0 && (
+        <ol class="ai-turns" aria-label="Requests">
+          {items.map((t) => (
+            <li key={t.id} class="ai-turn">
+              <p class="ai-req">{t.request}</p>
+              <p class="ai-reply">
+                {t.reply}
+                {Math.abs(t.to - t.from) >= 0.5 && (
+                  <span class="ai-length">
+                    {" "}
+                    {clock(t.from)} → {clock(t.to)}
+                  </span>
                 )}
-              </li>
-            );
-          })}
-        </ul>
+              </p>
+              <Changes p={p} turn={t} engine={engine} />
+            </li>
+          ))}
+        </ol>
+      )}
+      {items.length > 0 && (
+        <p class="muted small">Undo a whole request with ⌘Z, or drop one change with its ×.</p>
       )}
       <Chapters p={p} engine={engine} />
     </>
@@ -333,8 +508,25 @@ function Chapters({ p, engine }: { p: Project; engine: PreviewEngine | null }) {
 function Texts({ p, ready }: { p: Project; ready: boolean }) {
   const setMeta = (key: "summary" | "description", value: string) =>
     update((x) => ({ ...x, meta: { ...x.meta, [key]: value } }), `meta-${key}`);
+  const videoLanguage = languageName(answerLanguage(p));
   return (
     <>
+      <label class="ai-lang">
+        <span class="muted small">Write in</span>
+        <select
+          class="input input-sm"
+          value={language.value}
+          onChange={(e) => (language.value = e.currentTarget.value)}
+        >
+          <option value="">The video's language ({videoLanguage})</option>
+          {RESPONSE_LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.label}
+            </option>
+          ))}
+        </select>
+      </label>
+
       <p class="muted small">
         Written from the transcript of the edited video, cut words left out. [link] marks where the
         video's link goes; the YouTube description ends with the chapters.
@@ -466,7 +658,6 @@ export function AiPanel({ engine }: { engine: PreviewEngine | null }) {
   const takes = p.clips.filter((c) => c.transcript?.words.length).length;
   const transcribed = takes > 0;
   const ready = !!settings && transcribed;
-  const videoLanguage = languageName(answerLanguage(p));
 
   return (
     <aside class="inspector ai-panel" aria-label="AI">
@@ -510,21 +701,6 @@ export function AiPanel({ engine }: { engine: PreviewEngine | null }) {
           </p>
         </div>
       )}
-      <label class="ai-lang">
-        <span class="muted small">Write in</span>
-        <select
-          class="input input-sm"
-          value={language.value}
-          onChange={(e) => (language.value = e.currentTarget.value)}
-        >
-          <option value="">The video's language ({videoLanguage})</option>
-          {RESPONSE_LANGUAGES.map((l) => (
-            <option key={l.code} value={l.code}>
-              {l.label}
-            </option>
-          ))}
-        </select>
-      </label>
       <fieldset class="segmented ai-tabs" aria-label="AI tool">
         {TABS.map((t) => (
           <button
