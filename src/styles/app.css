@@ -947,6 +947,16 @@ select.input {
   flex: 1;
   min-height: 0;
 }
+/* Wraps parts of the editor that wait while a voice-over records, without changing the layout. */
+.ed-lock {
+  display: contents;
+}
+.ed-lock[inert] > * {
+  opacity: 0.6;
+}
+.transcript:is(.ed-lock[inert] > *) {
+  opacity: 1;
+}
 .ed-center {
   display: flex;
   flex-direction: column;
@@ -1604,18 +1614,127 @@ select.input {
   overflow: auto;
   padding: 6px 14px 14px;
 }
+.tr-settings {
+  border-bottom: 1px solid var(--line);
+}
+.tr-settings summary {
+  padding: 8px 14px;
+  cursor: pointer;
+  list-style-position: inside;
+}
+.tr-choice {
+  display: block;
+  padding-left: 1.1em;
+}
+.tr-settings summary:hover {
+  background: var(--surface-2);
+}
+.tr-settings-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px 10px;
+}
+.tr-settings-body .input {
+  min-width: 0;
+  max-width: 100%;
+}
+.tr-settings-body .input:first-child {
+  flex: 1 1 100%;
+}
+.tr-problem {
+  margin: 0;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.tr-take {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+.tr-take:last-child {
+  border-bottom: 0;
+}
+.tr-take-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
 .tr-take h3 {
-  margin: 12px 0 6px;
+  margin: 0;
   color: var(--muted);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.tr-empty {
+.tr-dur {
+  margin-left: 4px;
+  font-family: var(--mono);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.tr-voice button {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.tr-voice button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.tr-take > p.muted {
+  margin: 0 0 8px;
+}
+.tr-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.tr-busy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+.tr-type {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  gap: 6px;
+}
+.tr-type textarea {
+  resize: vertical;
+  font: inherit;
+  line-height: 1.5;
+}
+.tr-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 6px;
+}
+.tr-source {
+  color: var(--muted);
+  font-size: 12px;
+}
+.tr-links {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-left: auto;
+}
+.w-edit {
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
 }
 .tr-text {
   margin: 0;
@@ -1875,8 +1994,21 @@ select.input {
   border-radius: 10px;
   background: var(--surface-2);
 }
-.ai-retake {
-  align-items: flex-start;
+.ai-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.ai-section h3 {
+  margin: 0;
+}
+.ai-section p {
+  margin: 0;
+}
+.ai-source {
+  margin: 0;
 }
 .ai-time {
   display: inline-flex;
@@ -1904,20 +2036,6 @@ select.input {
   gap: 2px;
   flex: 1;
   min-width: 0;
-}
-.ai-quote {
-  font-size: 14px;
-  line-height: 1.4;
-  quotes: "“" "”";
-}
-.ai-retake.is-cut .ai-quote {
-  color: var(--muted);
-  text-decoration: line-through;
-  text-decoration-color: var(--accent);
-  text-decoration-thickness: 2px;
-}
-.ai-retake.is-rejected {
-  opacity: 0.55;
 }
 .ai-item-actions {
   display: flex;

@@ -1,6 +1,7 @@
 /**
  * Recording a take: pick the sources (screen with its sound, a camera, a
- * microphone), optionally write a script for the teleprompter, then a
+ * microphone, whose voice may serve only for the transcript), optionally
+ * write a script for the teleprompter, then a
  * countdown and the take itself. The controls and the teleprompter can float
  * over other windows (Document Picture-in-Picture); a shared tab does not
  * show them.
@@ -35,6 +36,8 @@ interface Prefs {
   screenAudio: boolean;
   camera: string | null;
   mic: string | null;
+  /** The voice is recorded for its text only: the take starts muted. */
+  voiceForText: boolean;
   prompter: boolean;
   wpm: number;
 }
@@ -43,6 +46,7 @@ const DEFAULT_PREFS: Prefs = {
   screenAudio: true,
   camera: null,
   mic: "",
+  voiceForText: false,
   prompter: false,
   wpm: 140,
 };
@@ -61,6 +65,11 @@ function saveLocal(key: string, value: unknown): void {
   } catch {
     // Not remembered; the choice holds for this session.
   }
+}
+
+/** The microphone chosen for the takes ("" the default one, null none), for a voice-over. */
+export function chosenMic(): string | null {
+  return load(PREFS_KEY, DEFAULT_PREFS).mic;
 }
 
 export function clock(seconds: number): string {
@@ -283,7 +292,9 @@ export function Record({ projectId }: { projectId: string | null }) {
     try {
       const recorded = await s.stop();
       // The files become seekable (duration and index) before the editor opens them.
-      const clip = await finalizeClip(s.projectId, recorded);
+      const finalized = await finalizeClip(s.projectId, recorded);
+      const clip: Clip =
+        p.voiceForText && finalized.mic ? { ...finalized, voice: "none" } : finalized;
       session = null;
       if (clip.duration < 0.5) {
         toast("That take was too short to keep.", "error");
@@ -498,6 +509,16 @@ export function Record({ projectId }: { projectId: string | null }) {
                 ))}
             </select>
             {p.mic !== null && <MicMeter deviceId={p.mic} />}
+            {p.mic !== null && (
+              <label class="check sub-check">
+                <input
+                  type="checkbox"
+                  checked={p.voiceForText}
+                  onChange={(e) => set({ voiceForText: e.currentTarget.checked })}
+                />
+                Only for the transcript: leave my voice out of the video
+              </label>
+            )}
           </section>
         </div>
         <label class="check">

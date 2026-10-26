@@ -4,19 +4,26 @@
  * languages they do not know, or the provider's speech-to-text model through
  * llm-connect. The device engines run in a worker. Times come back on the
  * file's clock and are moved onto the take's (the microphone opens a little
- * after the screen).
+ * after the screen). A voice-over's files are transcribed the same way, and
+ * their words laid on the takes through its pieces. With no model at all, the
+ * text can be typed: its words are spread over what is kept of the take.
  */
 import {
+  joinWords,
   type LlmSettings,
+  segmentsFromWords,
   type Transcript,
   type TranscriptPiece,
   transcribe,
   transcriptionProblem,
+  wordsFromSegments,
 } from "llm-connect";
 import { NEMO_MODELS, nemoSupports } from "llm-connect/nemo";
-import type { Clip, Media } from "../model/project";
+import type { Clip, ClipTranscript, Media } from "../model/project";
 import { getMedia } from "../model/store";
 import type { DeviceEngine, SpeechReply, SpeechRequest } from "../workers/speech";
+import type { Range } from "./timeline";
+import { placeWords } from "./voiceover";
 
 declare const __SPEECH_WORKER_URL__: string;
 
@@ -108,7 +115,34 @@ function onDevice(
   });
 }
 
-/** The take's words, timed on its own clock. */
+async function transcribeFile(
+  blob: Blob,
+  engine: Engine,
+  settings: LlmSettings | null,
+  onProgress: (message: string) => void,
+  signal?: AbortSignal,
+  language?: string,
+): Promise<Transcript> {
+  if (engine === "provider") {
+    if (!settings) throw new Error("Set up a model first, or transcribe on this device.");
+    onProgress("Transcribing with your provider…");
+    return transcribe(settings, blob, {
+      ...(signal ? { abortSignal: signal } : {}),
+      ...(language ? { language } : {}),
+    });
+  }
+  onProgress("Reading the sound…");
+  const { decodeAudio } = await import("llm-connect/nemo");
+  return onDevice(await decodeAudio(blob), engine, onProgress, signal, language);
+}
+
+/** A voice-over file spans several takes: transcribed once, then shared. */
+const overFiles = new Map<string, Promise<Transcript>>();
+
+/**
+ * The words of a take's voice, timed on its own clock: the voice recorded with it, or (`of`
+ * "over") its voice-over.
+ */
 export async function transcribeClip(
   projectId: string,
   clip: Clip,
@@ -118,23 +152,112 @@ export async function transcribeClip(
   signal?: AbortSignal,
   /** ISO 639-1 code of the spoken language: Whisper and Canary need it, Parakeet finds it. */
   language?: string,
-): Promise<Transcript> {
+  of: "take" | "over" = "take",
+): Promise<ClipTranscript> {
+  const source = engine === "provider" ? "provider" : "device";
+  if (of === "over") {
+    const pieces = clip.voiceover?.pieces ?? [];
+    if (pieces.length === 0) throw new Error("This take has no voice-over to transcribe.");
+    const words: TranscriptPiece[] = [];
+    let found: string | undefined;
+    for (const key of new Set(pieces.map((p) => p.key))) {
+      const mine = pieces.filter((p) => p.key === key);
+      const id = `${projectId}:${key}:${engine}:${language ?? ""}`;
+      let job = overFiles.get(id);
+      if (!job) {
+        const type = mine[0]?.type ?? "audio/webm";
+        job = getMedia(projectId, key, type.split(";")[0]).then((blob) => {
+          if (!blob) throw new Error("The voice-over is missing from this device.");
+          return transcribeFile(blob, engine, settings, onProgress, signal, language);
+        });
+        overFiles.set(id, job);
+        job.catch(() => overFiles.delete(id));
+      }
+      const t = await job;
+      found ??= t.language;
+      words.push(...placeWords(t.words, mine));
+    }
+    words.sort((a, b) => a.start - b.start);
+    return {
+      text: joinWords(words.map((w) => w.text)),
+      ...(found ? { language: found } : {}),
+      segments: segmentsFromWords(words),
+      words,
+      wordTimings: "exact",
+      source,
+    };
+  }
   const voice = voiceOf(clip);
   if (!voice) throw new Error("This take has no sound to transcribe.");
   const blob = await getMedia(projectId, voice.key, voice.type.split(";")[0]);
   if (!blob) throw new Error("The take's sound is missing from this device.");
-  let t: Transcript;
-  if (engine === "provider") {
-    if (!settings) throw new Error("Set up a model first, or transcribe on this device.");
-    onProgress("Transcribing with your provider…");
-    t = await transcribe(settings, blob, {
-      ...(signal ? { abortSignal: signal } : {}),
-      ...(language ? { language } : {}),
-    });
-  } else {
-    onProgress("Reading the sound…");
-    const { decodeAudio } = await import("llm-connect/nemo");
-    t = await onDevice(await decodeAudio(blob), engine, onProgress, signal, language);
-  }
-  return shift(t, voice.offset);
+  const t = await transcribeFile(blob, engine, settings, onProgress, signal, language);
+  return { ...shift(t, voice.offset), source };
+}
+
+/**
+ * A text typed for a take: its words spread over the parts of the take that are kept, in
+ * proportion to their length (the times are estimates, close enough to cut by sentence).
+ */
+export function typedTranscript(
+  text: string,
+  ranges: readonly Range[],
+  language?: string,
+): ClipTranscript {
+  const tokens = text.split(/\s+/).filter(Boolean);
+  const spans = ranges.filter((r) => r.end > r.start);
+  const total = spans.reduce((s, r) => s + (r.end - r.start), 0);
+  const weight = tokens.map((w) => w.length + 1);
+  const sum = weight.reduce((s, w) => s + w, 0);
+  const groups: string[][] = spans.map(() => []);
+  let acc = 0;
+  tokens.forEach((w, i) => {
+    const size = weight[i] as number;
+    // Where the word's middle falls, as time into the kept parts.
+    let at = ((acc + size / 2) / sum) * total;
+    acc += size;
+    let k = 0;
+    while (k < spans.length - 1 && at > (spans[k] as Range).end - (spans[k] as Range).start) {
+      at -= (spans[k] as Range).end - (spans[k] as Range).start;
+      k++;
+    }
+    groups[k]?.push(w);
+  });
+  const segments = spans.flatMap((r, k) => {
+    const g = groups[k] ?? [];
+    return g.length ? [{ text: joinWords(g), start: r.start, end: r.end }] : [];
+  });
+  const words = wordsFromSegments(segments);
+  return {
+    text: joinWords(tokens),
+    ...(language ? { language } : {}),
+    segments: segmentsFromWords(words),
+    words,
+    wordTimings: "estimated",
+    source: "typed",
+  };
+}
+
+/**
+ * The transcript with word `i` changed to `text`: several words share its time, and an empty
+ * text removes it.
+ */
+export function reword(t: ClipTranscript, i: number, text: string): ClipTranscript {
+  const w = t.words[i];
+  if (!w) return t;
+  const tokens = text.split(/\s+/).filter(Boolean);
+  const total = tokens.reduce((s, x) => s + x.length, 0) || 1;
+  let at = w.start;
+  const fresh = tokens.map((x) => {
+    const start = at;
+    at += ((w.end - w.start) * x.length) / total;
+    return { text: x, start, end: at };
+  });
+  const words = [...t.words.slice(0, i), ...fresh, ...t.words.slice(i + 1)];
+  return {
+    ...t,
+    text: joinWords(words.map((x) => x.text)),
+    segments: segmentsFromWords(words),
+    words,
+  };
 }

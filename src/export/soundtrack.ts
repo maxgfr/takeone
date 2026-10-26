@@ -1,11 +1,13 @@
 /**
- * The export's sound: for each take, the voice (the microphone's file) with
- * the noise removed and levelled to −16 LUFS, plus the screen's own sound at
- * its volume, both laid on the output's timeline piece by piece. Joins get a
- * few milliseconds of fade so a cut never clicks.
+ * The export's sound: for each take, the voice heard (the microphone's file,
+ * the voice-over's, or none) with the noise removed and levelled to −16 LUFS,
+ * plus the screen's own sound at its volume, both laid on the output's
+ * timeline piece by piece. Joins get a few milliseconds of fade so a cut
+ * never clicks.
  */
 import { processVoice } from "../audio/process";
 import { outputDuration, type Segment } from "../edit/timeline";
+import { voiceParts } from "../edit/voiceover";
 import type { Clip, Media, Project } from "../model/project";
 import { getMedia } from "../model/store";
 
@@ -15,7 +17,10 @@ const FADE = Math.round(RATE * 0.008);
 type OfflineCtx = typeof OfflineAudioContext;
 
 /** A file's sound as mono samples at 48 kHz, or null when it has none. */
-async function decode(projectId: string, media: Media): Promise<Float32Array | null> {
+async function decode(
+  projectId: string,
+  media: Pick<Media, "key" | "type">,
+): Promise<Float32Array | null> {
   const Ctx = (globalThis as { OfflineAudioContext?: OfflineCtx }).OfflineAudioContext;
   const blob = await getMedia(projectId, media.key, media.type.split(";")[0]);
   if (!Ctx || !blob) return null;
@@ -69,28 +74,49 @@ export async function buildSoundtrack(
   const { denoise, normalize, screenVolume } = project.style.audio;
   let any = false;
   const clips = project.clips.filter((c) => segments.some((s) => s.clip.id === c.id));
+  // A voice-over's file spans takes: cleaned once.
+  const cleaned = new Map<string, Float32Array | null>();
   for (const [i, clip] of clips.entries()) {
     if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
     const part = (r: number) =>
       onProgress?.((i + r) / clips.length, `Cleaning the sound of take ${i + 1}…`);
-    const voice = clip.mic ? await decode(project.id, clip.mic) : null;
-    let clean: Float32Array | null = null;
-    if (voice) {
-      const res = await processVoice(
-        { channels: [voice], sampleRate: RATE },
-        { denoise, normalize },
-        part,
-      );
-      clean = res.channels[0] ?? voice;
+    const parts = voiceParts(clip);
+    for (const p of parts) {
+      if (cleaned.has(p.key)) continue;
+      const voice = await decode(project.id, { key: p.key, type: p.type });
+      let clean: Float32Array | null = null;
+      if (voice) {
+        const res = await processVoice(
+          { channels: [voice], sampleRate: RATE },
+          { denoise, normalize },
+          part,
+        );
+        clean = res.channels[0] ?? voice;
+      }
+      cleaned.set(p.key, clean);
     }
     const screen =
       clip.screen?.audio && screenVolume > 0 ? await decode(project.id, clip.screen) : null;
+    let voiced = false;
     for (const s of segments) {
       if (s.clip.id !== clip.id) continue;
       const at = Math.round(s.at * RATE);
       const length = Math.round((s.end - s.start) * RATE);
-      if (clean && clip.mic)
-        lay(out, at, clean, Math.round((s.start - clip.mic.offset) * RATE), length, 1);
+      for (const p of parts) {
+        const clean = cleaned.get(p.key);
+        const from = Math.max(s.start, p.start);
+        const to = Math.min(s.end, p.end);
+        if (!clean || to <= from) continue;
+        lay(
+          out,
+          Math.round((s.at + (from - s.start)) * RATE),
+          clean,
+          Math.round((p.at + (from - p.start)) * RATE),
+          Math.round((to - from) * RATE),
+          1,
+        );
+        voiced = true;
+      }
       if (screen && clip.screen)
         lay(
           out,
@@ -101,7 +127,7 @@ export async function buildSoundtrack(
           screenVolume,
         );
     }
-    any ||= !!clean || !!screen;
+    any ||= voiced || !!screen;
     part(1);
   }
   if (!any) return null;
@@ -123,7 +149,7 @@ export function toAudioBuffer(track: Soundtrack): AudioBuffer {
   return buf;
 }
 
-/** A take's sound file, if it has one (for an audio-only export). */
+/** Whether a take is heard at all (for an audio-only export). */
 export function hasSound(clip: Clip): boolean {
-  return !!clip.mic || !!clip.screen?.audio;
+  return voiceParts(clip).length > 0 || !!clip.screen?.audio;
 }

@@ -27,7 +27,10 @@ export const transcriptSchema = z.object({
   segments: z.array(pieceSchema),
   words: z.array(pieceSchema),
   wordTimings: z.enum(["exact", "estimated", "none"]),
+  /** Where the text came from: a model on this device, the provider's, or typed by hand. */
+  source: z.enum(["device", "provider", "typed"]).optional(),
 });
+export type ClipTranscript = z.infer<typeof transcriptSchema>;
 
 /** A recorded file: where it is stored, and where it starts on the clip's clock. */
 export const mediaSchema = z.object({
@@ -47,6 +50,20 @@ export type Media = z.infer<typeof mediaSchema>;
 export const activitySchema = z.object({ t: z.number(), box: boxSchema, ratio: z.number() });
 export type Activity = z.infer<typeof activitySchema>;
 
+/** A piece of a voice-over: the file's sound from `at` laid on [start, end) of the take's clock. */
+export const voiceoverPieceSchema = z.object({
+  key: z.string(),
+  type: z.string(),
+  start: z.number(),
+  end: z.number(),
+  at: z.number(),
+});
+export type VoiceoverPiece = z.infer<typeof voiceoverPieceSchema>;
+
+/** What is heard of a take: the voice recorded with it, nothing, or a voice-over. */
+export const VOICES = ["take", "none", "over"] as const;
+export type Voice = (typeof VOICES)[number];
+
 export const clipSchema = z.object({
   id: z.string(),
   createdAt: z.number().default(0),
@@ -58,10 +75,46 @@ export const clipSchema = z.object({
   activity: z.array(activitySchema).default([]),
   /** Key of a still of the take, for lists. */
   poster: z.string().nullable().default(null),
-  /** What was said, on the clip's clock (the microphone's offset already added). */
+  /**
+   * The text of the voice heard, on the clip's clock (the microphone's offset already added):
+   * the voice-over's when it is heard and transcribed, else `takeTranscript`.
+   */
   transcript: transcriptSchema.nullable().default(null),
+  /** What was said (or typed) with the take, kept while a voice-over's text is shown. */
+  takeTranscript: transcriptSchema.nullable().default(null),
+  voice: z.enum(VOICES).default("take"),
+  /** A voice recorded afterwards, over the edited video, and its text. */
+  voiceover: z
+    .object({
+      pieces: z.array(voiceoverPieceSchema).default([]),
+      transcript: transcriptSchema.nullable().default(null),
+    })
+    .nullable()
+    .default(null),
 });
 export type Clip = z.infer<typeof clipSchema>;
+
+/** The clip with `transcript` following the voice heard. */
+function shown(c: Clip): Clip {
+  const over = c.voice === "over" ? c.voiceover?.transcript : null;
+  return { ...c, transcript: over ?? c.takeTranscript };
+}
+
+/** The clip with another voice heard, and its text shown. */
+export function withVoice(c: Clip, voice: Voice): Clip {
+  return shown({ ...c, voice });
+}
+
+/** The clip with a new text for the take's voice or for the voice-over. */
+export function withTranscript(c: Clip, of: "take" | "over", t: ClipTranscript | null): Clip {
+  if (of === "take") return shown({ ...c, takeTranscript: t });
+  return shown({ ...c, voiceover: { pieces: c.voiceover?.pieces ?? [], transcript: t } });
+}
+
+/** Which text is shown: the voice-over's or the take's. */
+export function shownOf(c: Clip): "take" | "over" {
+  return c.voice === "over" && c.voiceover?.transcript ? "over" : "take";
+}
 
 /** A range on a clip's clock. */
 const rangeSchema = z.object({
@@ -183,7 +236,13 @@ export function parseProject(input: unknown): ParseResult {
     const where = issue?.path.length ? `${issue.path.join(".")}: ` : "";
     return { ok: false, error: `${where}${issue?.message ?? "invalid project"}` };
   }
-  return { ok: true, project: res.data };
+  // Projects from before voice-overs kept the take's text in `transcript` alone.
+  const clips = res.data.clips.map((c) =>
+    c.takeTranscript || !c.transcript || shownOf(c) === "over"
+      ? c
+      : { ...c, takeTranscript: c.transcript },
+  );
+  return { ok: true, project: { ...res.data, clips } };
 }
 
 let counter = 0;

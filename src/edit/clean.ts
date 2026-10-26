@@ -82,6 +82,8 @@ export function fillerCuts(clip: Clip, existing: readonly Cut[] = []): Cut[] {
  * the speech still breathes; silence before the first word and after the last is trimmed too.
  */
 export function silenceCuts(clip: Clip, existing: readonly Cut[] = [], min = 1, keep = 0.3): Cut[] {
+  // Typed words have estimated times: their gaps say nothing about pauses.
+  if (clip.transcript?.source === "typed") return [];
   const words = clip.transcript?.words ?? [];
   if (words.length === 0) return [];
   const gaps: Range[] = [];

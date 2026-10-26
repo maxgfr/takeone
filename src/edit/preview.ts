@@ -1,6 +1,7 @@
 /**
  * The preview: plays the edit on a canvas. Each take's files play in hidden
- * media elements (the screen with its sound, the camera, the microphone),
+ * media elements (the screen with its sound, the camera, the voice heard:
+ * the microphone's file or a voice-over's),
  * kept in step with one clock on the output's timeline; a cut makes the
  * source time jump, so the elements are sent to the new time. Every frame,
  * the compositor draws what the elements show.
@@ -18,13 +19,13 @@ import {
   viewAt,
 } from "../render/compose";
 import { outputDuration, type Segment, segmentsOf, sourceAt } from "./timeline";
+import { pieceAt, voiceParts } from "./voiceover";
 
 type MediaUrl = (key: string, type: string) => Promise<string>;
 
 interface Elements {
   screen: HTMLVideoElement | null;
   camera: HTMLVideoElement | null;
-  mic: HTMLAudioElement | null;
 }
 
 /** Elements further than this from where they should be are sent there. */
@@ -46,6 +47,10 @@ export class PreviewEngine {
   private segments: Segment[] = [];
   private duration = 0;
   private readonly elements = new Map<string, Elements>();
+  /** The voices' files, by key: a voice-over's file plays in several takes. */
+  private readonly voices = new Map<string, HTMLAudioElement | null>();
+  /** No voice is heard (while a voice-over is being recorded over the video). */
+  voicesMuted = false;
   private raf = 0;
   private startedAt = 0;
   private startTime = 0;
@@ -81,7 +86,7 @@ export class PreviewEngine {
   private async prepare(clip: Clip): Promise<Elements> {
     const have = this.elements.get(clip.id);
     if (have) return have;
-    const els: Elements = { screen: null, camera: null, mic: null };
+    const els: Elements = { screen: null, camera: null };
     this.elements.set(clip.id, els);
     const url = (m: Media) => this.mediaUrl(m.key, m.type);
     const redraw = () => {
@@ -97,8 +102,6 @@ export class PreviewEngine {
       els.camera.addEventListener("seeked", redraw);
       els.camera.addEventListener("loadeddata", redraw);
     }
-    if (clip.mic)
-      els.mic = element(() => document.createElement("audio"), await url(clip.mic), false);
     this.syncTo(this.time.value, !this.playing.value);
     return els;
   }
@@ -115,9 +118,29 @@ export class PreviewEngine {
   pause(): void {
     if (!this.playing.value) return;
     this.playing.value = false;
-    for (const els of this.elements.values())
-      for (const el of [els.screen, els.camera, els.mic]) el?.pause();
+    for (const el of this.all()) el.pause();
     this.syncTo(this.time.value, true);
+  }
+
+  private *all(): Iterable<HTMLMediaElement> {
+    for (const els of this.elements.values())
+      for (const el of [els.screen, els.camera]) if (el) yield el;
+    for (const el of this.voices.values()) if (el) yield el;
+  }
+
+  /** The element playing a voice's file, once it is loaded (it starts loading on first ask). */
+  private voice(key: string, type: string): HTMLAudioElement | null {
+    if (this.voices.has(key)) return this.voices.get(key) ?? null;
+    this.voices.set(key, null);
+    void this.mediaUrl(key, type).then((u) => {
+      if (this.disposed || !u) return;
+      this.voices.set(
+        key,
+        element(() => document.createElement("audio"), u, false),
+      );
+      this.syncTo(this.time.value, !this.playing.value);
+    });
+    return null;
   }
 
   toggle(): void {
@@ -143,7 +166,7 @@ export class PreviewEngine {
     if (this.current !== clip.id) {
       // Another take: silence the one before.
       const before = this.current ? this.elements.get(this.current) : undefined;
-      for (const el of [before?.screen, before?.camera, before?.mic]) el?.pause();
+      for (const el of [before?.screen, before?.camera]) el?.pause();
       this.current = clip.id;
     }
     if (!els) return;
@@ -151,20 +174,28 @@ export class PreviewEngine {
     const pairs: [HTMLMediaElement | null, Media | null][] = [
       [els.screen, clip.screen],
       [els.camera, clip.camera],
-      [els.mic, clip.mic],
     ];
     for (const [el, m] of pairs) {
       if (!el || !m) continue;
-      const target = at.t - m.offset;
       if (el === els.screen) el.volume = Math.max(0, Math.min(1, volume));
-      if (target < 0) {
-        el.pause();
-        continue;
-      }
-      if (force || Math.abs(el.currentTime - target) > DRIFT) el.currentTime = target;
-      if (this.playing.value && el.paused) void el.play().catch(() => undefined);
-      if (!this.playing.value && !el.paused) el.pause();
+      this.follow(el, at.t - m.offset, force);
     }
+    // The voice: the piece of a file heard now, every other voice file silent.
+    const piece = this.voicesMuted ? undefined : pieceAt(voiceParts(clip), at.t);
+    const heard = piece ? this.voice(piece.key, piece.type) : null;
+    for (const el of this.voices.values()) if (el && el !== heard && !el.paused) el.pause();
+    if (heard && piece) this.follow(heard, piece.at + (at.t - piece.start), force);
+  }
+
+  /** Keeps an element at `target` seconds of its file, playing or not like the preview. */
+  private follow(el: HTMLMediaElement, target: number, force: boolean): void {
+    if (target < 0) {
+      el.pause();
+      return;
+    }
+    if (force || Math.abs(el.currentTime - target) > DRIFT) el.currentTime = target;
+    if (this.playing.value && el.paused) void el.play().catch(() => undefined);
+    if (!this.playing.value && !el.paused) el.pause();
   }
 
   private loop(now: number): void {
@@ -233,13 +264,12 @@ export class PreviewEngine {
   dispose(): void {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
-    for (const els of this.elements.values())
-      for (const el of [els.screen, els.camera, els.mic]) {
-        if (!el) continue;
-        el.pause();
-        el.removeAttribute("src");
-        el.load();
-      }
+    for (const el of this.all()) {
+      el.pause();
+      el.removeAttribute("src");
+      el.load();
+    }
     this.elements.clear();
+    this.voices.clear();
   }
 }
