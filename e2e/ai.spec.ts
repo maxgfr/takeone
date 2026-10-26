@@ -26,6 +26,16 @@ const cors = {
 /** What the mocked model answers, by the name of the schema it is asked to fill. */
 const ANSWERS: Record<string, unknown> = {
   retakes: { retakes: [{ take: 1, from: 0, to: 3, reason: "restarted sentence" }] },
+  ask: {
+    reply: "I cut the false start and fixed a word.",
+    cut: [{ take: 1, from: 0, to: 3, why: "restarted sentence" }],
+    restore: [],
+    fix: [{ take: 1, word: 8, text: "homepage." }],
+    zooms: [],
+    layouts: [],
+    blurs: [],
+    chapters: [{ take: 1, word: 4, title: "Intro" }],
+  },
   edit: {
     zooms: [
       {
@@ -157,7 +167,7 @@ async function transcribedTake(
   return { asked, images };
 }
 
-test("the AI cuts a retake and finds chapters, then writes the texts; captions show", async ({
+test("asked in plain words, the AI cuts, corrects and adds chapters; then the texts", async ({
   page,
   context,
 }) => {
@@ -166,26 +176,41 @@ test("the AI cuts a retake and finds chapters, then writes the texts; captions s
   page.on("pageerror", (e) => errors.push(e.message));
   const { asked } = await transcribedTake(page, "AI take");
 
-  // The edit, from the transcript alone: the retake cut, the chapters found
+  // A request in plain words: one answer, its changes listed
   await page.getByRole("button", { name: "AI", exact: true }).click();
   const panel = page.getByRole("complementary", { name: "AI" });
   await expect(panel.getByText(/OpenAI/)).toBeVisible();
   await expect(panel.getByText(/Works from the transcript: 1 take, 13 words/)).toBeVisible();
-  await panel.getByLabel("Zooms, layouts and blurs").uncheck();
-  await panel.getByLabel("Cut filler words and long pauses").uncheck();
-  await panel.getByRole("button", { name: "Edit the video" }).click();
-  const retake = panel.getByRole("listitem").filter({ hasText: "Cut “So this is the—”" });
-  await expect(retake).toContainText("restarted sentence", { timeout: 20_000 });
+  await panel.getByLabel("Show it the screen").uncheck();
+  await panel
+    .getByLabel("Ask the AI")
+    .fill("Coupe le faux départ, corrige le texte, ajoute des chapitres");
+  await page.keyboard.press("Enter");
+  await expect(panel.getByText("I cut the false start and fixed a word.")).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(panel.locator(".ai-req")).toHaveText(
+    "Coupe le faux départ, corrige le texte, ajoute des chapitres",
+  );
+  await expect(panel.getByLabel("Ask the AI")).toHaveValue("");
+  const changes = panel.getByRole("list", { name: "Changes" });
+  const retake = changes.getByRole("listitem").filter({ hasText: "Cut “So this is the—”" });
+  await expect(retake).toContainText("restarted sentence");
   await expect(page.locator(".w.is-cut")).toHaveCount(4);
+  const fix = changes.getByRole("listitem").filter({ hasText: "1 word corrected" });
+  await expect(fix).toContainText("dashboard. → homepage.");
+  await expect(page.locator(".w", { hasText: "homepage." })).toHaveCount(1);
+  expect(asked).toEqual(["ask"]);
 
   // Chapters: on the timeline, and listed for YouTube
   await expect(page.locator(".tl-chapter")).toHaveText(["Intro"]);
   await expect(panel.locator(".ai-pre")).toHaveText("0:00 Intro");
   await panel.getByLabel("Title of chapter 1").fill("Welcome");
   await expect(page.locator(".tl-chapter")).toHaveText(["Welcome"]);
-  expect([...asked].sort()).toEqual(["chapters", "retakes"]);
 
-  // Dropping the retake brings its words back
+  // Dropping a change undoes just it: the word, then the cut
+  await fix.getByRole("button", { name: /^Drop/ }).click();
+  await expect(page.locator(".w", { hasText: "dashboard." })).toHaveCount(1);
   await retake.getByRole("button", { name: /^Drop/ }).click();
   await expect(page.locator(".w.is-cut")).toHaveCount(0);
 
@@ -195,7 +220,7 @@ test("the AI cuts a retake and finds chapters, then writes the texts; captions s
   await expect(panel.getByLabel("Summary")).toHaveValue("A tour.");
   await expect(panel.getByLabel("LinkedIn")).toHaveValue("New video [link]");
   await expect(page.getByLabel("Title").first()).toHaveValue("The dashboard");
-  expect(asked.slice(2)).toEqual(["texts", "posts"]);
+  expect(asked.slice(1)).toEqual(["texts", "posts"]);
   await panel.getByRole("button", { name: "Close the AI panel" }).click();
   await page.locator(".w", { hasText: "the—" }).evaluate((first) => {
     // Cut the retake again by its words, for the captions below.
@@ -235,7 +260,7 @@ test("the AI edits the video: zooms, blurs, cuts and chapters in one step", asyn
 
   await page.getByRole("button", { name: "AI", exact: true }).click();
   const panel = page.getByRole("complementary", { name: "AI" });
-  await panel.getByRole("button", { name: "Edit the video" }).click();
+  await panel.getByRole("button", { name: "Full edit" }).click();
   const changes = panel.getByRole("list", { name: "Changes" });
   await expect(changes).toBeVisible({ timeout: 20_000 });
   await expect(changes.getByRole("listitem").filter({ hasText: /^.*Zoom 2\.4×/ })).toContainText(

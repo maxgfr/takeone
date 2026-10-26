@@ -90,9 +90,14 @@ function wordAt(clip: Clip, t: number): number | null {
 
 /**
  * What the model reads: each take's kept words, numbered as in the take and timed every few
- * seconds, the screen's changes, and the stills it will see.
+ * seconds, the screen's changes, and the stills it will see. With `showCut`, the words cut are
+ * there too, as ~word~, so that a request can bring them back.
  */
-export function editInput(p: Project, stills: readonly StillRef[]): string {
+export function editInput(
+  p: Project,
+  stills: readonly StillRef[],
+  { showCut = false }: { showCut?: boolean } = {},
+): string {
   const screen = p.clips.find((c) => c.screen)?.screen;
   const lines = [
     screen?.width ? `SCREEN: ${screen.width}×${screen.height} pixels.` : "SCREEN: unknown size.",
@@ -106,10 +111,12 @@ export function editInput(p: Project, stills: readonly StillRef[]): string {
     const words = c.transcript?.words ?? [];
     let mark = Number.NEGATIVE_INFINITY;
     const kept = words.flatMap((w, n) => {
-      if (isCut(p.cuts, c.id, w)) return [];
+      const cut = isCut(p.cuts, c.id, w);
+      if (cut && !showCut) return [];
       const timed = w.start - mark >= 3;
       if (timed) mark = w.start;
-      return [timed ? `[${n}|${clock(w.start)}]${w.text}` : `[${n}]${w.text}`];
+      const text = cut ? `~${w.text}~` : w.text;
+      return [timed ? `[${n}|${clock(w.start)}]${text}` : `[${n}]${text}`];
     });
     lines.push(`Words: ${kept.length ? kept.join(" ") : "(no speech)"}`);
     const changes = groupActivity(c.activity);
@@ -165,7 +172,7 @@ export function samePage(clip: Clip, t: number): { start: number; end: number } 
 }
 
 export interface EditNote {
-  kind: "zoom" | "layout" | "blur" | "cut" | "chapter";
+  kind: "zoom" | "layout" | "blur" | "cut" | "chapter" | "fix";
   id: string;
   clip: string;
   /** On the take's clock. */
@@ -288,6 +295,33 @@ export interface EditOptions {
   onProgress?: (message: string) => void;
 }
 
+/** Stills of every take's screen, `max` at most, named F1, F2…; none when the model is blind. */
+export async function gatherStills(
+  settings: LlmSettings,
+  p: Project,
+  max: number,
+): Promise<(StillRef & Still)[]> {
+  const stills: (StillRef & Still)[] = [];
+  if (visionProblem(settings) !== null) return stills;
+  const budget = stillBudget(p.clips, max);
+  for (const [i, c] of p.clips.entries()) {
+    const shots = await screenStills(p.id, c, stillTimes(c, budget[i] ?? 0));
+    for (const s of shots) stills.push({ ...s, id: `F${stills.length + 1}`, clip: c.id });
+  }
+  return stills;
+}
+
+/** The stills as the model sees them, each introduced by its name, take and time. */
+export function stillImages(
+  p: Project,
+  stills: readonly (StillRef & Still)[],
+): { label: string; jpeg: Uint8Array }[] {
+  return stills.map((s) => {
+    const take = p.clips.findIndex((c) => c.id === s.clip) + 1;
+    return { label: `${s.id}: take ${take} at ${clock(s.t)}`, jpeg: s.jpeg };
+  });
+}
+
 /** Everything the AI edit would change, without changing anything yet. */
 export async function planEdit(
   settings: LlmSettings,
@@ -303,25 +337,15 @@ export async function planEdit(
   const visual = async () => {
     if (!options.visual) return null;
     const canSee = visionProblem(settings) === null;
-    const stills: (StillRef & Still)[] = [];
-    if (canSee) {
-      say("Looking at the screen…");
-      const budget = stillBudget(p.clips, MAX_STILLS);
-      for (const [i, c] of p.clips.entries()) {
-        const shots = await screenStills(p.id, c, stillTimes(c, budget[i] ?? 0));
-        for (const s of shots) stills.push({ ...s, id: `F${stills.length + 1}`, clip: c.id });
-      }
-    }
+    if (canSee) say("Looking at the screen…");
+    const stills = await gatherStills(settings, p, MAX_STILLS);
     say("Placing zooms, layouts and blurs…");
     const answer = await call(settings, {
       name: "edit",
       schema: editSchema,
       instructions: editPrompt(language, canSee, p.style.layout),
       text: editInput(p, stills),
-      images: stills.map((s) => {
-        const take = p.clips.findIndex((c) => c.id === s.clip) + 1;
-        return { label: `${s.id}: take ${take} at ${clock(s.t)}`, jpeg: s.jpeg };
-      }),
+      images: stillImages(p, stills),
       effort: "medium",
       signal,
     });

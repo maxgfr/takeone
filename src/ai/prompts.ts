@@ -110,6 +110,34 @@ export function translatePrompt(language: string, title: string): string {
   ].join("\n");
 }
 
+/** Asking in plain words: the user says what they want, the model answers with the changes. */
+export function askPrompt(canSee: boolean, layout: string): string {
+  return [
+    `You are the editor of a video, working for its author, who tells you in plain words what they want. ${CONTEXT} You change the edit by returning the changes; the author sees each one listed and can drop it.`,
+    "- The transcript comes take by take, every word numbered: [12]word, and every few seconds with its time: [12|8.4s]word. Numbers restart at 0 in each take. A word written ~like this~ is cut: it is not in the video now.",
+    "- Screen changes are where the screen changed while recording, with the region in shares of the screen (x, y of the top-left corner, w, h, from 0 to 1).",
+    canSee
+      ? "- Stills of the screen follow, each named (F1, F2…) and taken at the time given, with a grid of tenths labelled .1 to .9 on the top and left edges: read regions on it."
+      : "- You do not see the screen: place zooms only on the screen changes, and return no blur.",
+    "- EARLIER REQUESTS, when there are some, are what was asked before and what you answered: the transcript already shows their result.",
+    "",
+    "Do what the REQUEST asks, all of it and nothing else. Leave every list empty that the request does not call for.",
+    "",
+    "cut: words to remove, from the first to the last (inclusive), in a take. Cut whole sentences or whole phrases so that what is left still reads and sounds natural; never start or end a cut in the middle of an idea. To reach a length, add up the time of what is kept (the times are in the transcript) and cut the weakest parts first: repetitions, failed attempts, digressions, long setups. Never cut every word.",
+    "restore: words now cut (~word~) to bring back, from the first to the last.",
+    "fix: words the speech recognition got wrong, mostly sound-alikes that make no sense in context, misspelled names, products and technical terms. Give the word's number and the right text (several words if it was split wrong, empty to drop a word that was never said). Only what you are sure of; never rephrase what was said correctly.",
+    "zooms: on the part of the screen being talked about or acted on, when seeing it closer helps (a button, a field, a menu, a few lines of code). The take, the first and last word of what is said about it, the region (the thing with a little room, less than half the screen). One at a time, 2 to 10 seconds each, the whole screen between them.",
+    `layouts: the default is "${layout}". For parts of a take with a camera that call for another: "camera" (the speaker alone, for an introduction or a conclusion), "side" (screen and speaker side by side), "screen" (no camera), "bubble" (the screen with the speaker in a corner). At least 4 seconds each.`,
+    canSee
+      ? "blurs: personal or secret data readable on a still (email addresses, phone numbers, keys, tokens, passwords, account numbers, people's names in a list): the still and the region, a little larger than the text."
+      : "blurs: none.",
+    "chapters: null unless the request is about chapters; then the whole new list, each starting at a word, with a title of two to five words. The first starts at the first kept word.",
+    "",
+    "reply: one or two sentences to the author, in the language of the request, saying what you changed, or why you changed nothing. No preamble.",
+    "why: three to six words, in the language of the request.",
+  ].join("\n");
+}
+
 export function editPrompt(language: string, canSee: boolean, layout: string): string {
   return [
     "You edit a screen recording: someone shows their screen (a product, a website, code) and talks over it, in one or several takes, with or without their camera. You place the zooms, the layouts and the blurs, the way a video editor would.",
