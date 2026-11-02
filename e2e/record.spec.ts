@@ -88,3 +88,50 @@ test("a take is recorded, then edited: preview, play, cut, zoom, layout, undo", 
   await expect(page.getByRole("button", { name: /^First take/ })).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test("a take's files live under takeone/ in the shared OPFS, and older ones move there", async ({
+  page,
+  context,
+}) => {
+  // maxgfr.github.io is one origin for every project page: one OPFS root for all of them.
+  await context.grantPermissions(["camera", "microphone"]);
+  await recordTake(page, "Stored take");
+  const id = new URL(page.url()).hash.split("/").pop() ?? "";
+  const list = (path: string[]) =>
+    page.evaluate(async (path) => {
+      let d = await navigator.storage.getDirectory();
+      try {
+        for (const p of path) d = await d.getDirectoryHandle(p);
+      } catch {
+        return null;
+      }
+      const names: string[] = [];
+      for await (const k of d.keys()) names.push(k);
+      return names.sort();
+    }, path);
+  const files = await list(["takeone", "projects", id]);
+  expect(files?.length).toBeGreaterThan(0);
+  expect(await list(["projects"])).toBeNull();
+
+  // Where an older version kept them: projects/<id> at the root, next to another site's folder.
+  await page.evaluate(async (id) => {
+    const root = await navigator.storage.getDirectory();
+    const own = await (await root.getDirectoryHandle("takeone")).getDirectoryHandle("projects");
+    const from = await own.getDirectoryHandle(id);
+    const legacy = await root.getDirectoryHandle("projects", { create: true });
+    await legacy.getDirectoryHandle("not-takeone", { create: true });
+    const to = await legacy.getDirectoryHandle(id, { create: true });
+    const handles: FileSystemFileHandle[] = [];
+    for await (const h of from.values())
+      if (h.kind === "file") handles.push(h as FileSystemFileHandle);
+    for (const h of handles)
+      await (h as unknown as { move(d: FileSystemDirectoryHandle): Promise<void> }).move(to);
+  }, id);
+  expect(await list(["takeone", "projects", id])).toEqual([]);
+
+  await page.reload();
+  await expect(page.getByLabel("Title")).toHaveValue("Stored take");
+  await expect.poll(() => list(["takeone", "projects", id])).toEqual(files);
+  expect(await list(["projects"])).toEqual(["not-takeone"]);
+  await expect(page.getByLabel("Preview")).toBeVisible();
+});

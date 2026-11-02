@@ -6,6 +6,7 @@ import { isolate } from "./app/isolation";
 import { Record } from "./app/Record";
 import { route } from "./app/router";
 import { Icon, Toasts } from "./app/ui";
+import { migrateMedia, sweepOrphanMedia } from "./model/store";
 
 function Brand() {
   return (
@@ -92,6 +93,16 @@ function App() {
   );
 }
 
-const root = document.getElementById("app");
-if (root) render(<App />, root);
+async function boot() {
+  // Media move to takeone/ before a screen opens them (moves only: quick). Bounded, so a
+  // stuck IndexedDB never keeps the app from showing.
+  await Promise.race([
+    migrateMedia().catch(() => undefined),
+    new Promise((r) => setTimeout(r, 3000)),
+  ]);
+  const root = document.getElementById("app");
+  if (root) render(<App />, root);
+  void sweepOrphanMedia().catch(() => undefined);
+}
+void boot();
 isolate();

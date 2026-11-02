@@ -183,6 +183,9 @@ export function Toasts() {
   );
 }
 
+export const STORAGE_FULL =
+  "Storage for this site is full: free space on this device or delete old recordings.";
+
 export function errorText(err: unknown): string {
   if (err instanceof DOMException && err.name === "AbortError") return "Cancelled.";
   if (err instanceof DOMException && err.name === "NotAllowedError")
@@ -194,6 +197,8 @@ export function errorText(err: unknown): string {
     return "No such device was found.";
   if (err instanceof DOMException && err.name === "NotReadableError")
     return "The device is busy: another app may be using it.";
+  // The origin's storage is shared by every site of maxgfr.github.io.
+  if (err instanceof DOMException && err.name === "QuotaExceededError") return STORAGE_FULL;
   return err instanceof Error ? err.message : String(err);
 }
 

@@ -297,6 +297,7 @@ export function Record({ projectId }: { projectId: string | null }) {
         p.voiceForText && finalized.mic ? { ...finalized, voice: "none" } : finalized;
       session = null;
       if (clip.duration < 0.5) {
+        await s.discard();
         toast("That take was too short to keep.", "error");
         status.value = "setup";
         return;
@@ -306,6 +307,8 @@ export function Record({ projectId }: { projectId: string | null }) {
       navigate(`#/edit/${id}`);
     } catch (err) {
       session = null;
+      // A take that could not be kept is not left on the disk.
+      await s.discard().catch(() => undefined);
       toast(errorText(err), "error", 8000);
       status.value = "setup";
     }
