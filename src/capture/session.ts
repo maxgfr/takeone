@@ -113,10 +113,23 @@ export class RecordingSession {
     onEnded: () => void,
   ): Promise<RecordingSession> {
     const s = new RecordingSession(projectId, sources, onEnded);
+    try {
+      await s.open(sources);
+    } catch (err) {
+      // A file that could not open (full storage): close and remove the ones that did.
+      await s.cancel().catch(() => undefined);
+      for (const stream of [sources.screen, sources.camera, sources.mic])
+        for (const t of stream?.getTracks() ?? []) t.stop();
+      throw err;
+    }
+    return s;
+  }
+
+  private async open(sources: OpenSources): Promise<void> {
     const add = async (kind: "screen" | "camera" | "mic", stream: MediaStream | null) => {
       if (!stream) return;
-      const key = `${s.clipId}-${kind}`;
-      const writer = await mediaWriter(projectId, key);
+      const key = `${this.clipId}-${kind}`;
+      const writer = await mediaWriter(this.projectId, key);
       const rec =
         kind === "mic"
           ? new TrackRecorder(stream, writer, "audio", { audio: 96_000 })
@@ -124,12 +137,11 @@ export class RecordingSession {
               video: kind === "screen" ? 6_000_000 : 2_500_000,
               audio: 128_000,
             });
-      s.tracks.push({ kind, rec, key });
+      this.tracks.push({ kind, rec, key });
     };
     await add("screen", sources.screen);
     await add("camera", sources.camera);
     await add("mic", sources.mic);
-    return s;
   }
 
   /** Starts every recorder at once. */
@@ -279,6 +291,18 @@ export class RecordingSession {
     this.stopped = true;
     this.stopSampling();
     await Promise.all(this.tracks.map((t) => t.rec.abort()));
-    await Promise.all(this.tracks.map((t) => deleteMedia(this.projectId, t.key)));
+    await this.discard();
+  }
+
+  /**
+   * Deletes every file of a take that is not kept (too short, or it could not be
+   * saved): the recorded files, their seekable copies and the still. Left
+   * behind, they would fill a disk shared with every site of the origin.
+   */
+  async discard(): Promise<void> {
+    const keys = this.tracks.flatMap((t) => [t.key, `${t.key}-r`]);
+    keys.push(`${this.clipId}-poster`);
+    await this.poster?.catch(() => undefined);
+    await Promise.all(keys.map((k) => deleteMedia(this.projectId, k).catch(() => undefined)));
   }
 }

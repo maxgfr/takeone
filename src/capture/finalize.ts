@@ -25,8 +25,15 @@ async function remux(projectId: string, media: Media): Promise<Media> {
   const type = media.type.startsWith("audio") ? "audio/webm" : "video/webm";
   const key = `${media.key}-r`;
   const writer = await mediaWriter(projectId, key);
-  await writer.write(new Blob([buffer], { type }));
-  await writer.close(type);
+  try {
+    await writer.write(new Blob([buffer], { type }));
+    await writer.close(type);
+  } catch (err) {
+    // No room for the copy: the original stays, the partial copy goes.
+    await writer.abort();
+    await deleteMedia(projectId, key);
+    throw err;
+  }
   await deleteMedia(projectId, media.key);
   return { ...media, key, type, duration: Number.isFinite(duration) ? duration : media.duration };
 }

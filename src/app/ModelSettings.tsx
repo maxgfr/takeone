@@ -166,8 +166,16 @@ export function ModelSettings({ onDone }: { onDone: () => void }) {
           disabled={!s.canSave}
           onClick={async () => {
             const res = await llm.save();
-            if (res.ok) onDone();
-            else
+            if (res.ok) {
+              // The origin's storage is shared by every site of maxgfr.github.io: it may be full.
+              if (!res.persisted)
+                toast(
+                  "Storage for this site is full: these settings will be lost on reload.",
+                  "error",
+                  8000,
+                );
+              onDone();
+            } else
               toast(
                 res.reason === "incomplete"
                   ? "Choose a model and enter a key."
